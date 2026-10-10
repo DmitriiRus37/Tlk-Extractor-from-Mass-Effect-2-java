@@ -19,6 +19,9 @@
         <javafx.version>27</javafx.version>
         <commons-io.version>2.22.0</commons-io.version>
 
+        <!-- test dependencies (JUnit 5.x, not 6.x: JUnit 6 requires Java 17) -->
+        <junit-jupiter.version>5.14.4</junit-jupiter.version>
+
         <!-- plugins -->
         <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
         <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
@@ -31,7 +34,26 @@
         <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
         <javafx-maven-plugin.version>0.0.8</javafx-maven-plugin.version>
         <versions-maven-plugin.version>2.22.0</versions-maven-plugin.version>
+        <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
+
+        <!-- minimum coverage enforced by "mvn verify" (jacoco:check) for the non-GUI code -->
+        <jacoco.minimum.line.coverage>0.90</jacoco.minimum.line.coverage>
+        <jacoco.minimum.branch.coverage>0.85</jacoco.minimum.branch.coverage>
+        <!-- JVM options of the test JVM; jacoco:prepare-agent prepends its agent (empty if skipped) -->
+        <argLine/>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit-jupiter.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -62,6 +84,12 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
             <version>${commons-io.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -109,6 +137,11 @@
                     <version>${maven-site-plugin.version}</version>
                 </plugin>
                 <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>${maven-javadoc-plugin.version}</version>
@@ -140,9 +173,77 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- The production code uses the platform default charset (a known bug); pin it so the
+                         tests behave the same on every JDK and locale (UTF-8 is the default from JDK 18). -->
+                    <argLine>@{argLine} -Dfile.encoding=UTF-8</argLine>
+                </configuration>
             </plugin>
 
             <!-- code coverage: "mvn verify" writes target/site/jacoco and enforces the minimums -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <!-- sets ${argLine}, which surefire passes to the forked test JVM -->
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                        <configuration>
+                            <!-- only instrument this project (not JavaFX, JUnit, ...) -->
+                            <includes>
+                                <include>ru.*</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- report over the whole code base, GUI included -->
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <!-- The GUI classes are left out of the threshold: their tests need a JavaFX
+                                 toolkit and are skipped where none can start (no display and no headless
+                                 Glass platform, which only JavaFX 25+ has), and the file-chooser handlers
+                                 cannot be exercised headlessly at all. They still appear in the report. -->
+                            <excludes>
+                                <exclude>ru/App.class</exclude>
+                                <exclude>ru/App$*.class</exclude>
+                                <exclude>ru/FxmlController.class</exclude>
+                                <exclude>ru/FxmlController$*.class</exclude>
+                            </excludes>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.minimum.line.coverage}</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.minimum.branch.coverage}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
 
             <plugin>
                 <groupId>org.openjfx</groupId>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written input for HuffmanCompressionTest, in the format TlkFile exports. -->
+<tlkFile TLKToolVersion="1.0.4">
+    <!--Male entries section begin (ends at position 5)-->
+    <string>
+        <id>100</id>
+        <position>0</position>
+        <data>Hello</data>
+    </string>
+    <string>
+        <id>101</id>
+        <position>1</position>
+        <data>Привет, мир!</data>
+    </string>
+    <string>
+        <id>-7</id>
+        <position>2</position>
+        <data>-1</data>
+    </string>
+    <string>
+        <id>134217731</id>
+        <position>3</position>
+        <data>Male</data>
+    </string>
+    <string>
+        <id>102</id>
+        <position>4</position>
+        <data></data>
+    </string>
+    <string>
+        <id>103</id>
+        <position>5</position>
+        <data>Line one&#13;&#10;Line two&#9;(tab)</data>
+    </string>
+    <!--Male entries section end-->
+    <!--Female entries section begin (ends at position 7)-->
+    <string>
+        <id>100</id>
+        <position>6</position>
+        <data>Hello, &lt;Shepard&gt; &amp; co.</data>
+    </string>
+    <string>
+        <id>134217731</id>
+        <position>7</position>
+        <data>Female</data>
+    </string>
+    <!--Female entries section end-->
+</tlkFile>

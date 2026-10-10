@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- No TLKToolVersion attribute: should be treated as the oldest version (1.0.0.0) and rejected. -->
+<tlkFile>
+    <string>
+        <id>1</id>
+        <position>0</position>
+        <data>unversioned</data>
+    </string>
+</tlkFile>
