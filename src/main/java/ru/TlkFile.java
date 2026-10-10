@@ -1,8 +1,6 @@
 package ru;
 
-import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.w3c.dom.Document;
 import org.xml.sax.InputSource;
@@ -27,17 +25,83 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Reads a Mass Effect 2 {@code .tlk} string table and writes it out as XML (or plain text): the
+ * "Create XML" half of the tool.
+ *
+ * <p>Usage: {@link #loadTlkData(String, boolean)} decodes a file into memory, then
+ * {@link #storeToFile(String, FileFormat, FxmlController)} writes it. {@link HuffmanCompression}
+ * performs the reverse conversion.
+ *
+ * <h2>File layout</h2>
+ * All integers are 32-bit, signed and little-endian (the PC format; Xbox 360 files are
+ * big-endian and rejected). The file consists of four consecutive parts:
+ * <ol>
+ *   <li><b>Header</b>: 7 ints (28 bytes), see {@link TlkHeader}.</li>
+ *   <li><b>String refs</b>: {@code entry1Count + entry2Count} pairs of ints
+ *       {@code (stringId, bitOffset)}, see {@link TlkStringRef}. The first {@code entry1Count}
+ *       pairs form the male section, the remaining {@code entry2Count} the female section
+ *       (gender-specific variants; in the bundled sample every female-section id also occurs in
+ *       the male section).</li>
+ *   <li><b>Huffman tree</b>: {@code treeNodeCount} pairs of ints {@code (left, right)}, see
+ *       {@link HuffmanNode}. Node 0 is the root.</li>
+ *   <li><b>Data</b>: {@code dataLen} bytes holding all strings, each Huffman-coded and terminated
+ *       by the code for {@code '\0'}, as one continuous bit stream that is read starting at the
+ *       least significant bit of each byte (see {@link BitArray#getRev(int)}). The last byte is
+ *       zero-padded.</li>
+ * </ol>
+ * A string ref's {@code bitOffset} is a bit index into that stream. Several refs may share an
+ * offset, and an offset may point into the middle of another string to reuse its tail.
+ */
 public class TlkFile  {
 
+    /** Header of the loaded file; {@code null} until {@link #loadTlkData(String, boolean)} runs. */
     private TlkHeader header;
+    /**
+     * All string refs of the loaded file in file order (male section, then female), each with
+     * its decoded text in {@link TlkStringRef#data}.
+     */
     private List<TlkStringRef> stringRefs;
+    /** Huffman tree nodes in file order; index 0 is the root. */
     private List<HuffmanNode> characterTree;
+    /**
+     * The compressed data block as bits; {@link TlkStringRef#bitOffset} values index into it via
+     * {@link BitArray#getRev(int)}.
+     */
     private BitArray bits;
 
-    /** <summary>
-     *      Loads a TLK file into memory.
-     * </summary>
-     * <param name="fileName"></param>
+    /**
+     * Creates an empty instance; call {@link #loadTlkData(String, boolean)} before
+     * {@link #storeToFile(String, FileFormat, FxmlController)}.
+     */
+    public TlkFile() {
+    }
+
+    /**
+     * Loads a TLK file into memory, replacing anything loaded before.
+     *
+     * <p>Steps (numbered like the comments in the code): (1) read the {@linkplain TlkHeader header}
+     * and check its magic number; (2) skip the string refs and read the Huffman tree; (3) read the
+     * compressed data; (4) decode <em>every</em> string of the data block in sequence, keyed by
+     * its starting bit offset; (5) go back to the string refs and attach to each the text found at
+     * its bit offset. An offset that does not start one of the strings from step 4 points into
+     * the middle of one (shared tail) and is decoded separately, which yields just that tail.
+     * Entries with a negative bit offset keep {@code null} text. The elapsed time in milliseconds
+     * is printed to standard output.
+     *
+     * <p>Note: every "seek" opens a new stream (see {@link #baseStreamSeek(long, String)}) and only
+     * the last of the three is closed. The data block is read with a single
+     * {@link java.io.InputStream#read(byte[], int, int)} call whose result is not checked, so a
+     * short read or truncated file leaves the rest of the block zero-filled.
+     *
+     * @param fileName path of the {@code .tlk} file
+     * @param isPC     meant to choose little-endian (PC) or big-endian (Xbox 360) byte order, as in
+     *                 the C# original; currently ignored, the file is always read as little-endian
+     * @throws IOException      if the file cannot be opened or read, or ends inside the header,
+     *                          the string refs or the tree ({@link EOFException})
+     * @throws RuntimeException (without a message) if the magic number is not that of a PC TLK
+     *                          file; this includes Xbox 360 files, whose big-endian magic reads
+     *                          as {@code 1416391424}
      */
     public void loadTlkData(String fileName, boolean isPC) throws IOException {
         long start = System.nanoTime();
@@ -133,11 +197,22 @@ public class TlkFile  {
         System.out.println("loadTlkData: "+ (System.nanoTime() - start)/1_000_000);
     }
 
-    /** <summary>
-     *      Writes data stored in memory to an appriopriate text format.
-     *  </summary>
-     *  <param name="fileName"></param>
-     *  <param name="ff"></param>
+    /**
+     * Writes the loaded strings to a text file, deleting any existing file at that path first.
+     *
+     * <p>{@link FileFormat#XML} writes the {@code <tlkFile>} document (see
+     * {@link #saveToXmlFile(String, FxmlController)}) and then re-indents it in place
+     * ({@link #prettyXmlFile(String)}); any other format writes the plain listing of
+     * {@link #saveToTextFile(String, FxmlController)}. Entries keep their file order (male
+     * section, then female). The elapsed time in milliseconds is printed to standard output.
+     *
+     * @param fileName   path of the output file
+     * @param ff         output format
+     * @param controller the UI controller, meant for progress reporting; currently unused
+     * @throws XMLStreamException if writing the XML fails
+     * @throws IOException        if the old file cannot be deleted or the new one cannot be
+     *                            written or re-read
+     * @throws RuntimeException   if re-indenting the XML fails; wraps the cause
      */
     public void storeToFile(String fileName, FileFormat ff, FxmlController controller) throws XMLStreamException, IOException {
 
@@ -156,20 +231,25 @@ public class TlkFile  {
         System.out.println("storeToFile: "+ (System.nanoTime() - start)/1_000_000);
     }
 
-    /** <summary>
-     *      Starts reading 'Bits' array at position 'bitOffset'. Read data is
-     *      used on a Huffman Tree to decode read bits into real strings.
-     *      'bitOffset' variable is updated with last read bit PLUS ONE (first unread bit).
-     *  </summary>
-     *  <param name="bitOffset"></param>
-     *  <returns>
-     *      decoded String or null if there's an error (last string's bit code is incomplete)
-     *  </returns>
-     *  <remarks>
-     *      Global variables used:
-     *      List(of HuffmanNodes) CharacterTree
-     *      main.java.ru.BitArray Bits
-     *  </remarks>
+    /**
+     * Decodes one NUL-terminated string from {@link #bits} by walking {@link #characterTree}.
+     *
+     * <p>Starting at the root, each bit (read LSB-first with {@link BitArray#getRev(int)}) selects
+     * the right child if it is 1 and the left child if it is 0. A non-negative child id is the
+     * index of an inner node; a negative id {@code v} is a leaf for the character
+     * {@code (char) (-1 - v)}, after which decoding restarts at the root. The {@code '\0'} leaf
+     * ends the string.
+     *
+     * <p>The character is computed as the low 16 bits of {@code 0xffff - v} using
+     * {@link BitConverter#GetBytes(int)} and {@link BitConverter#toCharRev(byte[], int)}, which
+     * gives the right result only on a little-endian platform. Should the conversion throw, the
+     * stack trace is printed and the character is treated as the terminator.
+     *
+     * @param bitOffsetWrap in: bit index to start decoding at; out: index of the first bit after
+     *                      the terminator's code, i.e. where the next string starts (or
+     *                      {@code bits.length() + 1} if the data ran out first)
+     * @return the decoded string without its terminator, or {@code null} if the data ended
+     *         before a terminator was found (e.g. in the zero padding after the last string)
      */
     private String GetString(Wrap bitOffsetWrap) {
         HuffmanNode root = characterTree.get(0);
@@ -208,11 +288,25 @@ public class TlkFile  {
         return null;
     }
 
-    /** <summary>
-     *       Writing data in an XML format.
-     *  </summary>
-     * <param name="fileName"></param>
-     * */
+    /**
+     * Writes all string refs as an unindented XML document.
+     *
+     * <p>The root is {@code <tlkFile TLKToolVersion="1.0.4">}; it holds one {@code <string>}
+     * per entry with the children {@code <id>} ({@link TlkStringRef#stringId}),
+     * {@code <position>} ({@link TlkStringRef#position}) and {@code <data>} (the text, or the
+     * literal {@code -1} if the entry's bit offset is negative). XML comments mark the beginning
+     * and end of the male and female sections. {@link HuffmanCompression} reads this format
+     * back and rejects a {@code TLKToolVersion} below 1.0.3.
+     *
+     * <p>Note: the declaration says UTF-8 while the {@link FileWriter} uses the platform default
+     * charset (UTF-8 on JDK 18 and later), and the {@code FileWriter} is never closed
+     * ({@link XMLStreamWriter#close()} does not close the underlying writer).
+     *
+     * @param fileName   path of the output file
+     * @param controller the UI controller, meant for progress reporting; currently unused
+     * @throws XMLStreamException if the XML writer fails
+     * @throws IOException        if the file cannot be opened for writing
+     */
     private void saveToXmlFile(String fileName, FxmlController controller) throws XMLStreamException, IOException {
         int totalCount = stringRefs.size();
 
@@ -258,6 +352,21 @@ public class TlkFile  {
         xr.close();
     }
 
+    /**
+     * Re-indents an XML file in place, 4 spaces per level.
+     *
+     * <p>Reads the whole file into a string (re-joining its lines with the platform line
+     * separator), parses it into a DOM and serializes it back over the same file with
+     * indentation and without the XML declaration.
+     *
+     * <p>Note: reading and writing use the platform default charset, and the output
+     * {@link PrintWriter} is never closed.
+     *
+     * @param fileName path of the XML file to rewrite
+     * @throws IOException      if the file cannot be read
+     * @throws RuntimeException if parsing, transforming or opening the file for writing fails;
+     *                          the message contains the entire XML text
+     */
     private void prettyXmlFile(String fileName) throws IOException {
         String xmlString;
         try (BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
@@ -291,13 +400,15 @@ public class TlkFile  {
         }
     }
 
-    /** <summary>
-     *      Writing data in a normal text format.
-     * </summary>
-     * <remarks>
-     *      Currently not used by main application, but it works ok.
-     * </remarks>
-     * <param name="fileName"></param>
+    /**
+     * Writes all string refs as plain text: one {@code "<stringId>: <data>"} line per entry,
+     * terminated by CRLF ({@code data} prints as {@code null} for entries without text).
+     *
+     * <p>Currently not used by main application, but it works ok. Note: the file is opened in
+     * append mode once per line, and write errors are printed and otherwise ignored.
+     *
+     * @param fileName   path of the output file; appended to
+     * @param controller the UI controller, meant for progress reporting; currently unused
      */
     private void saveToTextFile(String fileName, FxmlController controller) {
         int totalCount = stringRefs.size();
@@ -314,6 +425,15 @@ public class TlkFile  {
         }
     }
 
+    /**
+     * Reads a 32-bit signed integer stored little-endian (least significant byte first), the
+     * byte order of every integer in a PC TLK file.
+     *
+     * @param in stream positioned at the integer; advanced by 4 bytes
+     * @return the integer
+     * @throws IOException  if the stream fails
+     * @throws EOFException if the stream ends before 4 bytes were read
+     */
     public static int readInt32(InputStream in) throws IOException {
         int ch1 = in.read();
         int ch2 = in.read();
@@ -325,6 +445,20 @@ public class TlkFile  {
         return (ch4 << 24) + (ch3 << 16) + (ch2 << 8) + ch1;
     }
 
+    /**
+     * Opens a file and skips to a byte offset; the stand-in for C# {@code BaseStream.Seek},
+     * since a Java input stream cannot move backwards.
+     *
+     * <p>The caller owns the returned stream and must close it. Note: the result of
+     * {@link PositionInputStream#skip(long)} is not checked, so the stream may end up before
+     * {@code pos} if the skip comes up short.
+     *
+     * @param pos      byte offset from the start of the file
+     * @param fileName path of the file
+     * @return a new stream whose {@linkplain PositionInputStream#getPosition() position} is the
+     *         number of bytes skipped
+     * @throws IOException if the file cannot be opened or skipping fails
+     */
     public static PositionInputStream baseStreamSeek(long pos, String fileName) throws IOException {
         PositionInputStream r = new PositionInputStream(Files.newInputStream(Paths.get(fileName)));
         r.skip(pos);
@@ -337,15 +471,35 @@ public class TlkFile  {
 //            return result;
 //        }
 
+    /**
+     * The fixed 28-byte header at the start of a TLK file: seven little-endian ints, read in the
+     * order of the fields below.
+     */
     public static class TlkHeader {
+        /**
+         * File signature: {@code 7040084} ({@code 0x006B6C54}, the bytes {@code "Tlk\0"}) for a
+         * PC file. The only field that is validated.
+         */
         public int magic;
+        /** Format version; 3 in ME2 files, and the value {@link HuffmanCompression} writes. */
         public int ver;
+        /** Minimum version; 2 in ME2 files, and the value {@link HuffmanCompression} writes. */
         public int minVer;
+        /** Number of string refs in the first (male) section. */
         public int entry1Count;
+        /** Number of string refs in the second (female) section, which follows the male one. */
         public int entry2Count;
+        /** Number of Huffman tree nodes (8 bytes each), stored after the string refs. */
         public int treeNodeCount;
+        /** Length in bytes of the compressed data block, stored after the tree. */
         public int dataLen;
 
+        /**
+         * Reads the seven header fields.
+         *
+         * @param r stream positioned at the start of the file; advanced by 28 bytes
+         * @throws IOException if reading fails or the stream ends inside the header
+         */
         public TlkHeader(InputStream r) throws IOException {
             this.magic = TlkFile.readInt32(r);
             this.ver = TlkFile.readInt32(r);
@@ -358,33 +512,98 @@ public class TlkFile  {
 
     }
 
+    /**
+     * One string-ref entry: an 8-byte record pairing a string id with the position of its text in
+     * the compressed data, plus two fields filled in while loading.
+     */
     public static class TlkStringRef {
+        /**
+         * The id the game uses to look the string up. In the bundled {@code BIOGame_RUS.tlk},
+         * the entries with a negative id (top bit set) are exactly those with a
+         * {@link #bitOffset} of {@code -1}, i.e. without text; the XML round trip relies on that.
+         */
         public int stringId;
+        /**
+         * Bit index into the compressed data where the text starts, or {@code -1} (any negative
+         * value) if the entry has no text.
+         */
         public int bitOffset;
 
+        /**
+         * Decoded text without the NUL terminator; {@code null} if {@link #bitOffset} is negative.
+         * Not stored in the file; set by {@link TlkFile#loadTlkData(String, boolean)}.
+         */
         public String data;
+        /**
+         * Zero-based index of this entry in the file's string-ref table, counted across both
+         * sections: positions {@code 0} to {@code entry1Count - 1} are the male section, the
+         * following {@code entry2Count} the female one. Not stored in the file; written to XML as
+         * {@code <position>} so that {@link HuffmanCompression} can restore the original order.
+         */
         public int position;
 
+        /**
+         * Reads the id and bit offset of one entry; {@link #data} and {@link #position} are left
+         * for the caller to fill in.
+         *
+         * @param r stream positioned at the entry; advanced by 8 bytes
+         * @throws IOException if reading fails or the stream ends inside the entry
+         */
         public TlkStringRef(InputStream r) throws IOException {
             this.stringId = TlkFile.readInt32(r);
             this.bitOffset = TlkFile.readInt32(r);
         }
     }
 
+    /**
+     * One node of the Huffman tree as stored in the file: two child references of 4 bytes each.
+     *
+     * <p>A child value {@code >= 0} is the index of another node; a negative value {@code v} is a
+     * leaf for the character {@code (char) (-1 - v)}, so {@code -1} is the {@code '\0'}
+     * terminator and {@code -33} is a space. While decoding, a 0 bit follows {@link #leftNodeId}
+     * and a 1 bit follows {@link #rightNodeId}.
+     */
     public static class HuffmanNode {
+        /** Child taken on a 0 bit: node index, or {@code -1 - c} for a leaf with character {@code c}. */
         public int leftNodeId;
+        /** Child taken on a 1 bit: node index, or {@code -1 - c} for a leaf with character {@code c}. */
         public int rightNodeId;
 
+        /**
+         * Reads one node: the left child, then the right child.
+         *
+         * @param r stream positioned at the node; advanced by 8 bytes
+         * @throws IOException if reading fails or the stream ends inside the node
+         */
         public HuffmanNode(InputStream r) throws IOException {
             this.leftNodeId = TlkFile.readInt32(r);
             this.rightNodeId = TlkFile.readInt32(r);
         }
     }
 
-    @NoArgsConstructor @AllArgsConstructor
+    /**
+     * Mutable {@code int} holder standing in for the C# {@code ref int} parameter of the
+     * original {@code GetString}, so that {@link TlkFile#GetString(Wrap)} can hand back the next
+     * bit offset along with the decoded string. Lombok generates {@code getValue()} and
+     * {@code setValue(int)}.
+     */
     @Getter @Setter
     public static class Wrap {
+        /** The wrapped value; a bit offset into the compressed data where this class is used. */
         int value;
+
+        /** Creates a holder with value {@code 0}. */
+        public Wrap() {
+        }
+
+        /**
+         * Creates a holder with the given value.
+         *
+         * @param value the initial value
+         */
+        public Wrap(int value) {
+            this.value = value;
+        }
     }
 
 }
