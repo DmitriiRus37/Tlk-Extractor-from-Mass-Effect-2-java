@@ -5,49 +5,53 @@
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.text.*?>
 
-<AnchorPane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="330.0" prefWidth="700.0" xmlns="http://javafx.com/javafx/16" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ru.FxmlController">
+<AnchorPane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="370.0" prefWidth="700.0" xmlns="http://javafx.com/javafx/16" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ru.FxmlController">
     <children>
-        <TabPane layoutX="12.0" layoutY="46.0" prefHeight="263.0" prefWidth="677.0" tabClosingPolicy="UNAVAILABLE">
+        <TabPane layoutX="12.0" layoutY="46.0" prefHeight="303.0" prefWidth="677.0" tabClosingPolicy="UNAVAILABLE">
             <tabs>
-                <Tab text="Create XML">
-                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="234.0" prefWidth="677.0">
+                <Tab text="Create XML/TXT/CSV">
+                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="274.0" prefWidth="677.0">
                         <children>
                             <TextField fx:id="textFieldInputPathTlkToXml" layoutX="200.0" layoutY="20.0" prefHeight="30.0" prefWidth="330.0" promptText="Input path" />
                             <Label layoutX="38.0" layoutY="25.0" prefHeight="20.0" prefWidth="120.0" text="Select Input file" textAlignment="CENTER" />
                             <Label layoutX="38.0" layoutY="70.0" prefHeight="20.0" prefWidth="120.0" text="Select Output file" />
                             <TextField fx:id="textFieldOutputPathTlkToXml" layoutX="200.0" layoutY="65.0" prefHeight="30.0" prefWidth="330.0" promptText="Output path" />
-                            <ProgressBar fx:id="progressBarTlkToXml" layoutX="201.0" layoutY="156.0" prefHeight="18.0" prefWidth="439.0" progress="0.0" />
-                            <Label layoutX="38.0" layoutY="156.0" text="PROGRESS:" />
-                            <Label layoutX="38.0" layoutY="194.0" text="STATUS:" />
-                            <TextField fx:id="statusTlkToXml" editable="false" layoutX="200.0" layoutY="189.0" prefHeight="28.0" prefWidth="440.0" promptText="current status" />
-                            <Button fx:id="startTlkToXml" layoutX="201.0" layoutY="111.0" mnemonicParsing="false" onAction="#startExportTlkToXml" prefHeight="28.0" prefWidth="86.0" text="START" />
+                            <Label layoutX="38.0" layoutY="115.0" prefHeight="20.0" prefWidth="120.0" text="Output format" />
+                            <ChoiceBox fx:id="choiceBoxFormatTlkToXml" layoutX="200.0" layoutY="110.0" prefHeight="30.0" prefWidth="100.0" />
+                            <ProgressBar fx:id="progressBarTlkToXml" layoutX="201.0" layoutY="200.0" prefHeight="18.0" prefWidth="439.0" progress="0.0" />
+                            <Label layoutX="38.0" layoutY="200.0" text="PROGRESS:" />
+                            <Label layoutX="38.0" layoutY="238.0" text="STATUS:" />
+                            <TextField fx:id="statusTlkToXml" editable="false" layoutX="200.0" layoutY="233.0" prefHeight="28.0" prefWidth="440.0" promptText="current status" />
+                            <Button fx:id="startTlkToXml" layoutX="201.0" layoutY="155.0" mnemonicParsing="false" onAction="#startExportTlkToXml" prefHeight="28.0" prefWidth="86.0" text="START" />
                             <Button fx:id="buttonToSelectInputTlkFile" layoutX="541.0" layoutY="20.0" mnemonicParsing="false" onAction="#selectInputTlkFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                             <Button fx:id="buttonToSelectOutputXmlFile" layoutX="541.0" layoutY="65.0" mnemonicParsing="false" onAction="#selectOutputXmlFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                         </children>
                     </AnchorPane>
                 </Tab>
                 <Tab text="Create Tlk">
-                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="230.0" prefWidth="677.0">
+                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="270.0" prefWidth="677.0">
                         <children>
                             <TextField fx:id="textFieldInputPathXmlToTlk" layoutX="200.0" layoutY="20.0" prefHeight="30.0" prefWidth="330.0" promptText="Input path" />
                             <Label layoutX="38.0" layoutY="25.0" prefHeight="20.0" prefWidth="120.0" text="Select Input file" textAlignment="CENTER" />
                             <Label layoutX="38.0" layoutY="70.0" prefHeight="20.0" prefWidth="120.0" text="Select Output file" />
                             <TextField fx:id="textFieldOutputPathXmlToTlk" layoutX="200.0" layoutY="65.0" prefHeight="30.0" prefWidth="330.0" promptText="Output path" />
-                            <ProgressBar fx:id="progressBarXmlToTlk" layoutX="201.0" layoutY="156.0" prefHeight="18.0" prefWidth="439.0" progress="0.0" />
-                            <Label layoutX="38.0" layoutY="156.0" text="PROGRESS:" />
-                            <Label layoutX="38.0" layoutY="194.0" text="STATUS:" />
-                            <TextField fx:id="statusXmlToTlk" editable="false" layoutX="200.0" layoutY="189.0" prefHeight="28.0" prefWidth="440.0" promptText="current status" />
-                            <Button fx:id="startXmlToTlk" layoutX="201.0" layoutY="111.0" mnemonicParsing="false" onAction="#startExportXmlToTlk" prefHeight="28.0" prefWidth="86.0" text="START" />
-                            <CheckBox fx:id="checkBoxDebugXmlToTlk" layoutX="310.0" layoutY="116.0" mnemonicParsing="false" text="Test version (shows the string id before every line in game)" />
+                            <Label layoutX="38.0" layoutY="115.0" prefHeight="20.0" prefWidth="120.0" text="Input format" />
+                            <ChoiceBox fx:id="choiceBoxFormatXmlToTlk" layoutX="200.0" layoutY="110.0" prefHeight="30.0" prefWidth="100.0" />
+                            <ProgressBar fx:id="progressBarXmlToTlk" layoutX="201.0" layoutY="200.0" prefHeight="18.0" prefWidth="439.0" progress="0.0" />
+                            <Label layoutX="38.0" layoutY="200.0" text="PROGRESS:" />
+                            <Label layoutX="38.0" layoutY="238.0" text="STATUS:" />
+                            <TextField fx:id="statusXmlToTlk" editable="false" layoutX="200.0" layoutY="233.0" prefHeight="28.0" prefWidth="440.0" promptText="current status" />
+                            <Button fx:id="startXmlToTlk" layoutX="201.0" layoutY="155.0" mnemonicParsing="false" onAction="#startExportXmlToTlk" prefHeight="28.0" prefWidth="86.0" text="START" />
+                            <CheckBox fx:id="checkBoxDebugXmlToTlk" layoutX="310.0" layoutY="160.0" mnemonicParsing="false" text="Test version (shows the string id before every line in game)" />
                             <Button fx:id="buttonToSelectInputXmlFile" layoutX="541.0" layoutY="20.0" mnemonicParsing="false" onAction="#selectInputXmlFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                             <Button fx:id="buttonToSelectOutputTlkFile" layoutX="541.0" layoutY="65.0" mnemonicParsing="false" onAction="#selectOutputTlkFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                         </children>
                     </AnchorPane>
                 </Tab>
                 <Tab text="About">
-                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="303.0" prefWidth="655.0">
+                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="343.0" prefWidth="655.0">
                         <children>
-                            <TextArea editable="false" layoutX="34.0" layoutY="7.0" prefHeight="240.0" prefWidth="602.0" text="This project was rewritten from GithHub &#10;https://github.com/jgoclawski/me2-tlk-tool &#10;as my Java Pet Project.&#10;&#10;&quot;Create XML&quot; is a tab to load Tlk file and get output XML.&#10;&#10;&quot;Create TLK&quot; is a tab to load edited XML file and get output TLK.&#10;&#10;&#10;Author: gurylev.dmitrii@mail.ru Gurylev Dmitrii (Russia, Moscow)">
+                            <TextArea editable="false" layoutX="34.0" layoutY="7.0" prefHeight="280.0" prefWidth="602.0" text="This project was rewritten from GithHub &#10;https://github.com/jgoclawski/me2-tlk-tool &#10;as my Java Pet Project.&#10;&#10;&quot;Create XML/TXT/CSV&quot; is a tab to load Tlk file and get output XML, TXT or CSV.&#10;&#10;&quot;Create TLK&quot; is a tab to load edited XML, TXT or CSV file and get output TLK.&#10;&#10;&#10;Author: gurylev.dmitrii@mail.ru Gurylev Dmitrii (Russia, Moscow)">
                                 <font>
                                     <Font size="17.0" />
                                 </font>

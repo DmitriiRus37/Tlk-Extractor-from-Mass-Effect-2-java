@@ -47,7 +47,7 @@ class AppTest {
                 for (Tab tab : tabs.getTabs()) {
                     titles.add(tab.getText());
                 }
-                assertEquals(Arrays.asList("Create XML", "Create Tlk", "About"), titles);
+                assertEquals(Arrays.asList("Create XML/TXT/CSV", "Create Tlk", "About"), titles);
             } finally {
                 stage.hide();
             }

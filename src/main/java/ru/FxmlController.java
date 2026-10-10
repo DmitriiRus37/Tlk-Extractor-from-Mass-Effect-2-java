@@ -5,6 +5,7 @@ import javafx.fxml.FXML;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextField;
 import javafx.stage.FileChooser;
@@ -15,15 +16,23 @@ import org.apache.commons.io.FilenameUtils;
 import java.io.File;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.NoSuchFileException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.function.DoubleConsumer;
 
 /**
- * Controller of {@code app.fxml}: connects the "Create XML" tab to {@link TlkFile} and the
+ * Controller of {@code app.fxml}: connects the "Create XML/TXT/CSV" tab to {@link TlkFile} and the
  * "Create Tlk" tab to {@link HuffmanCompression}.
  *
  * <p>Each tab has an input path, an output path (filled in from the input path with the other
- * extension until the user picks an output file explicitly), a START button, a progress bar and
- * a status field; the "Create Tlk" tab also has the "test version" check box of the C# original.
+ * extension until the user picks an output file explicitly), a {@link FileFormat} choice box
+ * (the output format of the first tab, the input format of the second; {@link FileFormat#XML} by
+ * default), a START button, a progress bar and a status field; the "Create Tlk" tab also has the
+ * "test version" check box of the C# original. The format follows the file name: picking or
+ * typing a path ending in {@code .xml}, {@code .txt} or {@code .csv} selects that format, and
+ * choosing another output format changes the extension of the output path accordingly.
  * A conversion runs on a background thread: while it runs, the tab's buttons and fields are
  * disabled, the status says {@value #STATUS_RUNNING} and the progress bar first spins (while the
  * input is read) and then fills up (while the output is written). Afterwards the status says
@@ -40,11 +49,17 @@ public class FxmlController {
     static final String STATUS_DONE = "DONE";
     /** Start of the status text after a failed conversion; the reason follows. */
     static final String STATUS_FAILED = "FAILED: ";
+    /** Formats offered by the choice boxes, in display order. */
+    static final List<FileFormat> FORMATS = Collections.unmodifiableList(
+            Arrays.asList(FileFormat.XML, FileFormat.TXT, FileFormat.CSV));
+    /** Extension filters of the file dialogs for TLK files. */
+    private static final List<FileChooser.ExtensionFilter> TLK_FILTERS =
+            Collections.singletonList(new FileChooser.ExtensionFilter("TLK files", "*.tlk"));
 
     /** "Select" button for the TLK input file; its action is wired in the FXML. */
     @FXML
     private Button buttonToSelectInputTlkFile;
-    /** "Select" button for the XML output file; its action is wired in the FXML. */
+    /** "Select" button for the output file (XML, TXT or CSV); its action is wired in the FXML. */
     @FXML
     private Button buttonToSelectOutputXmlFile;
     /** START button of the "Create XML" tab; its action is wired in the FXML. */
@@ -53,9 +68,15 @@ public class FxmlController {
     /** Path of the TLK file to convert, chosen with the dialog or typed in. */
     @FXML
     private TextField textFieldInputPathTlkToXml;
-    /** Path of the XML file to write; defaults to the input path with a {@code .xml} extension. */
+    /**
+     * Path of the file to write; defaults to the input path with the extension of the selected
+     * output format.
+     */
     @FXML
     private TextField textFieldOutputPathTlkToXml;
+    /** Output format of the "Create XML/TXT/CSV" tab; {@link FileFormat#XML} by default. */
+    @FXML
+    private ChoiceBox<FileFormat> choiceBoxFormatTlkToXml;
     /** Read-only status field of the "Create XML" tab. */
     @FXML
     private TextField statusTlkToXml;
@@ -63,12 +84,12 @@ public class FxmlController {
     @FXML
     private ProgressBar progressBarTlkToXml;
     /**
-     * Whether the user picked the XML output file explicitly; once set, choosing a new input
+     * Whether the user picked the output file explicitly; once set, choosing a new input
      * file no longer overwrites the output path.
      */
     private boolean textFieldOutputChosenTlkToXml;
 
-    /** "Select" button for the XML input file; its action is wired in the FXML. */
+    /** "Select" button for the input file (XML, TXT or CSV); its action is wired in the FXML. */
     @FXML
     private Button buttonToSelectInputXmlFile;
     /** "Select" button for the TLK output file; its action is wired in the FXML. */
@@ -77,9 +98,12 @@ public class FxmlController {
     /** START button of the "Create Tlk" tab; its action is wired in the FXML. */
     @FXML
     private Button startXmlToTlk;
-    /** Path of the XML file to convert, chosen with the dialog or typed in. */
+    /** Path of the XML, TXT or CSV file to convert, chosen with the dialog or typed in. */
     @FXML
     private TextField textFieldInputPathXmlToTlk;
+    /** Input format of the "Create Tlk" tab; {@link FileFormat#XML} by default. */
+    @FXML
+    private ChoiceBox<FileFormat> choiceBoxFormatXmlToTlk;
     /** Path of the TLK file to write; defaults to the input path with a {@code .tlk} extension. */
     @FXML
     private TextField textFieldOutputPathXmlToTlk;
@@ -109,6 +133,44 @@ public class FxmlController {
     }
 
     /**
+     * Called by {@link javafx.fxml.FXMLLoader} once the {@code @FXML} fields are injected: fills
+     * both format choice boxes with {@link #FORMATS}, selects {@link FileFormat#XML} and makes the
+     * formats follow the file names (see the class description).
+     */
+    @FXML
+    private void initialize() {
+        for (ChoiceBox<FileFormat> box : Arrays.asList(choiceBoxFormatTlkToXml, choiceBoxFormatXmlToTlk)) {
+            box.getItems().setAll(FORMATS);
+            box.setValue(FileFormat.XML);
+        }
+        followFileName(textFieldOutputPathTlkToXml, choiceBoxFormatTlkToXml);
+        followFileName(textFieldInputPathXmlToTlk, choiceBoxFormatXmlToTlk);
+        choiceBoxFormatTlkToXml.valueProperty().addListener((observable, oldFormat, newFormat) -> {
+            String path = textFieldOutputPathTlkToXml.getText();
+            FileFormat current = FileFormat.fromFileName(path);
+            if (newFormat != null && current != null && current != newFormat) {
+                textFieldOutputPathTlkToXml.setText(withExtension(new File(path.trim()), newFormat.getExtension()));
+            }
+        });
+    }
+
+    /**
+     * Makes a choice box select the format whose extension the path in a text field has,
+     * whenever the path changes; paths with another extension leave the choice alone.
+     *
+     * @param field  the path field
+     * @param format the choice box
+     */
+    private static void followFileName(TextField field, ChoiceBox<FileFormat> format) {
+        field.textProperty().addListener((observable, oldPath, newPath) -> {
+            FileFormat inferred = FileFormat.fromFileName(newPath);
+            if (inferred != null) {
+                format.setValue(inferred);
+            }
+        });
+    }
+
+    /**
      * Work done by one conversion on the background thread.
      */
     @FunctionalInterface
@@ -123,30 +185,33 @@ public class FxmlController {
     }
 
     /**
-     * Handles the input "Select" button of the "Create XML" tab: lets the user pick a
+     * Handles the input "Select" button of the "Create XML/TXT/CSV" tab: lets the user pick a
      * {@code .tlk} file and puts its path into the input field. Unless an output file was
-     * chosen explicitly, the output field is set to the same path with a {@code .xml}
-     * extension. Does nothing if the dialog is cancelled.
+     * chosen explicitly, the output field is set to the same path with the extension of the
+     * selected output format. Does nothing if the dialog is cancelled.
      */
     @FXML
     private void selectInputTlkFile() {
-        File f = chooseFile(true, textFieldInputPathTlkToXml, "TLK files", "*.tlk");
+        File f = chooseFile(true, textFieldInputPathTlkToXml, TLK_FILTERS);
         if (f != null) {
             textFieldInputPathTlkToXml.setText(f.getAbsolutePath());
             if (!textFieldOutputChosenTlkToXml) {
-                textFieldOutputPathTlkToXml.setText(withExtension(f, "xml"));
+                String extension = choiceBoxFormatTlkToXml.getValue().getExtension();
+                textFieldOutputPathTlkToXml.setText(withExtension(f, extension));
             }
         }
     }
 
     /**
-     * Handles the output "Select" button of the "Create XML" tab: lets the user choose where to
-     * save the XML file and marks the output path as explicitly chosen. Does nothing if the
-     * dialog is cancelled.
+     * Handles the output "Select" button of the "Create XML/TXT/CSV" tab: lets the user choose
+     * where to save the file (offering the selected output format's extension first) and marks
+     * the output path as explicitly chosen; a file name with another format's extension selects
+     * that format. Does nothing if the dialog is cancelled.
      */
     @FXML
     private void selectOutputXmlFile() {
-        File f = chooseFile(false, textFieldOutputPathTlkToXml, "XML files", "*.xml");
+        File f = chooseFile(false, textFieldOutputPathTlkToXml,
+                formatFilters(choiceBoxFormatTlkToXml.getValue(), false));
         if (f != null) {
             textFieldOutputPathTlkToXml.setText(f.getAbsolutePath());
             textFieldOutputChosenTlkToXml = true;
@@ -155,13 +220,15 @@ public class FxmlController {
 
     /**
      * Handles the input "Select" button of the "Create Tlk" tab: lets the user pick an
-     * {@code .xml} file and puts its path into the input field. Unless an output file was chosen
-     * explicitly, the output field is set to the same path with a {@code .tlk} extension. Does
-     * nothing if the dialog is cancelled.
+     * {@code .xml}, {@code .txt} or {@code .csv} file and puts its path into the input field,
+     * which selects the matching input format. Unless an output file was chosen explicitly, the
+     * output field is set to the same path with a {@code .tlk} extension. Does nothing if the
+     * dialog is cancelled.
      */
     @FXML
     private void selectInputXmlFile() {
-        File f = chooseFile(true, textFieldInputPathXmlToTlk, "XML files", "*.xml");
+        File f = chooseFile(true, textFieldInputPathXmlToTlk,
+                formatFilters(choiceBoxFormatXmlToTlk.getValue(), true));
         if (f != null) {
             textFieldInputPathXmlToTlk.setText(f.getAbsolutePath());
             if (!textFieldOutputChosenXmlToTlk) {
@@ -177,7 +244,7 @@ public class FxmlController {
      */
     @FXML
     private void selectOutputTlkFile() {
-        File f = chooseFile(false, textFieldOutputPathXmlToTlk, "TLK files", "*.tlk");
+        File f = chooseFile(false, textFieldOutputPathXmlToTlk, TLK_FILTERS);
         if (f != null) {
             textFieldOutputPathXmlToTlk.setText(f.getAbsolutePath());
             textFieldOutputChosenXmlToTlk = true;
@@ -185,18 +252,43 @@ public class FxmlController {
     }
 
     /**
+     * Returns the extension filters of a file dialog for the text formats: one per format, the
+     * given one first, preceded for an open dialog by one for all supported files.
+     *
+     * @param selected the format to offer first
+     * @param open     whether the filters are for an open dialog
+     * @return the filters, the first one to be preselected
+     */
+    static List<FileChooser.ExtensionFilter> formatFilters(FileFormat selected, boolean open) {
+        List<FileChooser.ExtensionFilter> filters = new ArrayList<>();
+        List<String> all = new ArrayList<>();
+        List<FileFormat> order = new ArrayList<>(FORMATS);
+        order.remove(selected);
+        order.add(0, selected);
+        for (FileFormat format : order) {
+            String pattern = "*." + format.getExtension();
+            all.add(pattern);
+            filters.add(new FileChooser.ExtensionFilter(format + " files", pattern));
+        }
+        if (open) {
+            filters.add(0, new FileChooser.ExtensionFilter("XML, TXT and CSV files", all));
+        }
+        return filters;
+    }
+
+    /**
      * Shows a file dialog owned by this controller's window, starting in the directory of the
      * path currently in {@code field} (and, for a save dialog, with its file name).
      *
-     * @param open        {@code true} for an open dialog, {@code false} for a save dialog
-     * @param field       field holding the current path, possibly empty
-     * @param description description of the extension filter
-     * @param pattern     extension pattern, e.g. {@code "*.tlk"}
+     * @param open    {@code true} for an open dialog, {@code false} for a save dialog
+     * @param field   field holding the current path, possibly empty
+     * @param filters extension filters; the first one is preselected
      * @return the chosen file, or {@code null} if the dialog was cancelled
      */
-    private static File chooseFile(boolean open, TextField field, String description, String pattern) {
+    private static File chooseFile(boolean open, TextField field, List<FileChooser.ExtensionFilter> filters) {
         FileChooser chooser = new FileChooser();
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(description, pattern));
+        chooser.getExtensionFilters().addAll(filters);
+        chooser.setSelectedExtensionFilter(filters.get(0));
         String current = field.getText();
         if (current != null && !current.trim().isEmpty()) {
             File file = new File(current.trim()).getAbsoluteFile();
@@ -224,38 +316,42 @@ public class FxmlController {
     }
 
     /**
-     * Handles START on the "Create XML" tab: converts the TLK file named in the input field to an
-     * XML file at the path in the output field, on a background thread.
+     * Handles START on the "Create XML/TXT/CSV" tab: converts the TLK file named in the input
+     * field to a file of the selected format at the path in the output field, on a background
+     * thread.
      */
     @FXML
     private void startExportTlkToXml() {
         final String input = textFieldInputPathTlkToXml.getText().trim();
         final String output = textFieldOutputPathTlkToXml.getText().trim();
+        final FileFormat format = choiceBoxFormatTlkToXml.getValue();
         runInBackground(input, output, progress -> {
             TlkFile tlk = new TlkFile();
             tlk.loadTlkData(input);
-            tlk.storeToFile(output, FileFormat.XML, progress);
+            tlk.storeToFile(output, format, progress);
         }, progressBarTlkToXml, statusTlkToXml, startTlkToXml, buttonToSelectInputTlkFile,
-                buttonToSelectOutputXmlFile, textFieldInputPathTlkToXml, textFieldOutputPathTlkToXml);
+                buttonToSelectOutputXmlFile, textFieldInputPathTlkToXml, textFieldOutputPathTlkToXml,
+                choiceBoxFormatTlkToXml);
     }
 
     /**
-     * Handles START on the "Create Tlk" tab: converts the XML file named in the input field to a
-     * TLK file at the path in the output field, on a background thread. If the "test version" box
-     * is checked, the strings get their id as a prefix.
+     * Handles START on the "Create Tlk" tab: converts the file of the selected input format named
+     * in the input field to a TLK file at the path in the output field, on a background thread.
+     * If the "test version" box is checked, the strings get their id as a prefix.
      */
     @FXML
     private void startExportXmlToTlk() {
         final String input = textFieldInputPathXmlToTlk.getText().trim();
         final String output = textFieldOutputPathXmlToTlk.getText().trim();
+        final FileFormat format = choiceBoxFormatXmlToTlk.getValue();
         final boolean debugVersion = checkBoxDebugXmlToTlk.isSelected();
         runInBackground(input, output, progress -> {
             HuffmanCompression hc = new HuffmanCompression();
-            hc.loadInputData(input, FileFormat.XML, debugVersion);
+            hc.loadInputData(input, format, debugVersion);
             hc.saveToTlkFile(output, progress);
         }, progressBarXmlToTlk, statusXmlToTlk, startXmlToTlk, buttonToSelectInputXmlFile,
                 buttonToSelectOutputTlkFile, textFieldInputPathXmlToTlk, textFieldOutputPathXmlToTlk,
-                checkBoxDebugXmlToTlk);
+                choiceBoxFormatXmlToTlk, checkBoxDebugXmlToTlk);
     }
 
     /**

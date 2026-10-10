@@ -18,8 +18,8 @@ import java.util.Map;
 import java.util.function.DoubleConsumer;
 
 /**
- * Reads a Mass Effect 2 {@code .tlk} string table and writes it out as XML (or plain text): the
- * "Create XML" half of the tool.
+ * Reads a Mass Effect 2 {@code .tlk} string table and writes it out as XML, TXT or CSV: the
+ * "Create XML/TXT/CSV" half of the tool.
  *
  * <p>Usage: {@link #loadTlkData(String)} decodes a file into memory, then
  * {@link #storeToFile(String, FileFormat, DoubleConsumer)} writes it. {@link HuffmanCompression}
@@ -46,52 +46,20 @@ import java.util.function.DoubleConsumer;
  * no text. Several refs may share an offset, and an offset may point into the middle of another
  * string to reuse its tail.
  *
- * <h2>XML format</h2>
- * <pre>{@code
- * <?xml version="1.0" encoding="UTF-8"?>
- * <tlkFile TLKToolVersion="1.0.4">
- *     <!--Male entries section begin (ends at position 103969)-->
- *     <string>
- *         <id>34931</id>
- *         <position>0</position>
- *         <data>text of the string</data>
- *     </string>
- *     ...
- * </tlkFile>
- * }</pre>
- * One {@code <string>} per string ref, in file order; {@code <position>} is the ref's index in
- * the file, which {@link HuffmanCompression} uses to restore the order. As in the C# original, an
- * entry without text has the {@code <data>} {@code -1}, and an entry is taken to have text exactly
- * if its id is not negative (true for every entry of the game's files). An entry that breaks this
- * rule gets the attribute {@code hasText="false"} or {@code hasText="true"} on its {@code <data>}
- * element, so that it survives the round trip; older readers ignore the attribute. Carriage
- * returns are written as {@code &#13;} so that XML parsers do not turn them into line feeds.
+ * <h2>Text formats</h2>
+ * {@link #storeToFile(String, FileFormat, DoubleConsumer)} writes the string refs as
+ * {@link FileFormat#XML} ({@link XmlFormat}), {@link FileFormat#TXT} ({@link TxtFormat}) or
+ * {@link FileFormat#CSV} ({@link CsvFormat}). All three carry the same information: the tool
+ * version, and for each string ref in file order its id, its position, whether it has text and
+ * the text. {@link HuffmanCompression} reads each of them back.
  */
 public class TlkFile {
 
-    /** Value of the {@code TLKToolVersion} attribute written to XML files: the C# original's version. */
-    static final String TOOL_VERSION = "1.0.4";
-    /** Name of the XML root element. */
-    static final String XML_ROOT = "tlkFile";
-    /** Name of the root element's attribute holding the version of the tool that wrote the file. */
-    static final String XML_VERSION_ATTRIBUTE = "TLKToolVersion";
-    /** Name of the XML element of one string ref. */
-    static final String XML_STRING = "string";
-    /** Name of the XML element holding a string ref's id. */
-    static final String XML_ID = "id";
-    /** Name of the XML element holding a string ref's position in the file. */
-    static final String XML_POSITION = "position";
-    /** Name of the XML element holding a string ref's text. */
-    static final String XML_DATA = "data";
     /**
-     * Optional attribute of {@code <data>} that says whether the entry has text, written only where
-     * the id's sign would suggest otherwise (see the class description).
+     * Tool version written to every exported file (the {@code TLKToolVersion}): the C# original's
+     * version.
      */
-    static final String XML_HAS_TEXT = "hasText";
-    /** {@code <data>} content of an entry without text. */
-    static final String XML_NO_TEXT = "-1";
-    /** Indentation of one XML nesting level. */
-    private static final String INDENT = "    ";
+    static final String TOOL_VERSION = "1.0.4";
 
     /** Header of the loaded file; {@code null} until {@link #loadTlkData(String)} succeeds. */
     private TlkHeader header;
@@ -301,11 +269,12 @@ public class TlkFile {
      * Writes the loaded strings to a text file, replacing any existing file. The file is UTF-8
      * encoded, whatever the platform's default charset.
      *
-     * <p>{@link FileFormat#XML} writes the {@code <tlkFile>} document described in the class
-     * description, indented with 4 spaces; {@link FileFormat#TXT} and (for now)
-     * {@link FileFormat#CSV} write one {@code "<stringId>: <text>"} line per entry, terminated by
-     * CRLF ({@code <text>} is {@code null} for entries without text). Entries keep their file order
-     * (male section, then female). If writing fails, the output file may be left incomplete.
+     * <p>{@link FileFormat#XML} writes the {@code <tlkFile>} document described in
+     * {@link XmlFormat}, {@link FileFormat#TXT} the {@code "<id>: <text>"} lines described in
+     * {@link TxtFormat} and {@link FileFormat#CSV} the RFC 4180 table described in
+     * {@link CsvFormat}. Entries keep their file order (male section, then female); each format
+     * records the tool version {@value #TOOL_VERSION}, every entry's id and position, and whether
+     * it has text. If writing fails, the output file may be left incomplete.
      *
      * @param fileName path of the output file
      * @param format   output format
@@ -314,8 +283,9 @@ public class TlkFile {
      *                 calling thread
      * @throws IllegalStateException if no TLK file has been loaded
      * @throws IOException           if the file cannot be written, or a string contains a
-     *                               character that XML 1.0 cannot represent (such as
-     *                               {@code U+0001}); the message names the entry
+     *                               character that the format cannot represent (for XML a
+     *                               character XML 1.0 does not allow, such as {@code U+0001}; for
+     *                               CSV an unpaired surrogate); the message names the entry
      */
     public void storeToFile(String fileName, FileFormat format, DoubleConsumer progress) throws IOException {
         if (stringRefs == null) {
@@ -323,168 +293,64 @@ public class TlkFile {
         }
         ProgressReporter reporter = new ProgressReporter(progress, stringRefs.size());
         try (Writer out = Files.newBufferedWriter(Paths.get(fileName), StandardCharsets.UTF_8)) {
+            FormatWriter writer;
             switch (format) {
                 case XML:
-                    writeXml(out, reporter);
+                    writer = XmlFormat.writer(out);
                     break;
                 case TXT:
+                    writer = TxtFormat.writer(out);
+                    break;
                 case CSV:
-                    writeText(out, reporter);
+                    writer = CsvFormat.writer(out);
                     break;
                 default:
                     throw new IllegalArgumentException("Unsupported output format: " + format);
             }
+            write(writer, reporter);
         }
         reporter.finish();
     }
 
     /**
-     * Writes all string refs as an indented XML document (see the class description). XML
-     * comments mark the beginning and end of the male and female sections; they are written even
+     * Writes all string refs with a format writer: the header, then the entries in file order.
+     * Comments mark the beginning and end of the male and female sections; they are written even
      * if a section is empty.
      *
-     * @param out      destination
+     * @param writer   the format
      * @param progress advanced once per entry
-     * @throws IOException if writing fails or a string cannot be represented in XML
+     * @throws IOException if writing fails or a string cannot be represented in the format
      */
-    private void writeXml(Writer out, ProgressReporter progress) throws IOException {
+    private void write(FormatWriter writer, ProgressReporter progress) throws IOException {
         int maleCount = header.entry1Count;
         int lastPosition = header.entry1Count + header.entry2Count - 1;
-        out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        out.write("<" + XML_ROOT + " " + XML_VERSION_ATTRIBUTE + "=\"" + TOOL_VERSION + "\">\n");
-        writeComment(out, "Male entries section begin (ends at position " + (maleCount - 1) + ")");
+        writer.begin(TOOL_VERSION);
+        writer.comment("Male entries section begin (ends at position " + (maleCount - 1) + ")");
         int index = 0;
         for (TlkStringRef ref : stringRefs) {
             if (index++ == maleCount) {
-                writeSectionChange(out, lastPosition);
+                writeSectionChange(writer, lastPosition);
             }
-            writeXmlEntry(out, ref);
+            writer.entry(ref);
             progress.step();
         }
         if (index <= maleCount) {
-            writeSectionChange(out, lastPosition);
+            writeSectionChange(writer, lastPosition);
         }
-        writeComment(out, "Female entries section end");
-        out.write("</" + XML_ROOT + ">\n");
+        writer.comment("Female entries section end");
+        writer.end();
     }
 
     /**
      * Writes the comments that close the male section and open the female one.
      *
-     * @param out          destination
+     * @param writer       the format
      * @param lastPosition position of the last entry of the female section
      * @throws IOException if writing fails
      */
-    private static void writeSectionChange(Writer out, int lastPosition) throws IOException {
-        writeComment(out, "Male entries section end");
-        writeComment(out, "Female entries section begin (ends at position " + lastPosition + ")");
-    }
-
-    /**
-     * Writes an XML comment on its own line, indented by one level.
-     *
-     * @param out  destination
-     * @param text comment text; must not contain {@code "--"}
-     * @throws IOException if writing fails
-     */
-    private static void writeComment(Writer out, String text) throws IOException {
-        out.write(INDENT + "<!--" + text + "-->\n");
-    }
-
-    /**
-     * Writes one {@code <string>} element.
-     *
-     * @param out destination
-     * @param ref the entry
-     * @throws IOException if writing fails or the text cannot be represented in XML
-     */
-    private static void writeXmlEntry(Writer out, TlkStringRef ref) throws IOException {
-        boolean hasText = ref.data != null;
-        out.write(INDENT + "<" + XML_STRING + ">\n");
-        out.write(INDENT + INDENT + "<" + XML_ID + ">" + ref.stringId + "</" + XML_ID + ">\n");
-        out.write(INDENT + INDENT + "<" + XML_POSITION + ">" + ref.position + "</" + XML_POSITION + ">\n");
-        out.write(INDENT + INDENT + "<" + XML_DATA);
-        if (hasText != (ref.stringId >= 0)) {
-            out.write(" " + XML_HAS_TEXT + "=\"" + hasText + "\"");
-        }
-        out.write(">");
-        if (hasText) {
-            writeEscaped(out, ref);
-        } else {
-            out.write(XML_NO_TEXT);
-        }
-        out.write("</" + XML_DATA + ">\n");
-        out.write(INDENT + "</" + XML_STRING + ">\n");
-    }
-
-    /**
-     * Writes the text of an entry as XML character data: {@code &}, {@code <} and {@code >}
-     * become entity references, a carriage return becomes {@code &#13;}, everything else is
-     * written as is.
-     *
-     * @param out destination
-     * @param ref the entry whose {@link TlkStringRef#data} to write
-     * @throws IOException if writing fails or the text contains a character XML 1.0 does not
-     *                     allow (a control character other than tab, line feed and carriage
-     *                     return, an unpaired surrogate, {@code U+FFFE} or {@code U+FFFF})
-     */
-    private static void writeEscaped(Writer out, TlkStringRef ref) throws IOException {
-        String text = ref.data;
-        int start = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            String replacement;
-            if (c == '&') {
-                replacement = "&amp;";
-            } else if (c == '<') {
-                replacement = "&lt;";
-            } else if (c == '>') {
-                replacement = "&gt;";
-            } else if (c == '\r') {
-                replacement = "&#13;";
-            } else if (Character.isHighSurrogate(c) && i + 1 < text.length()
-                    && Character.isLowSurrogate(text.charAt(i + 1))) {
-                i++;
-                continue;
-            } else if (isXmlChar(c)) {
-                continue;
-            } else {
-                throw new IOException("String " + ref.stringId + " (position " + ref.position
-                        + ") cannot be written as XML: it contains the character U+"
-                        + String.format("%04X", (int) c) + ", which XML 1.0 does not allow");
-            }
-            out.write(text, start, i - start);
-            out.write(replacement);
-            start = i + 1;
-        }
-        out.write(text, start, text.length() - start);
-    }
-
-    /**
-     * Tells whether a UTF-16 unit may appear on its own in XML 1.0 character data.
-     *
-     * @param c the character
-     * @return {@code true} for tab, line feed, carriage return and {@code U+0020} to
-     *         {@code U+FFFD} except surrogates
-     */
-    private static boolean isXmlChar(char c) {
-        return c >= 0x20 ? !Character.isSurrogate(c) && c != 0xFFFE && c != 0xFFFF
-                : c == '\t' || c == '\n' || c == '\r';
-    }
-
-    /**
-     * Writes all string refs as plain text: one {@code "<stringId>: <data>"} line per entry,
-     * terminated by CRLF ({@code data} prints as {@code null} for entries without text).
-     *
-     * @param out      destination
-     * @param progress advanced once per entry
-     * @throws IOException if writing fails
-     */
-    private void writeText(Writer out, ProgressReporter progress) throws IOException {
-        for (TlkStringRef ref : stringRefs) {
-            out.write(ref.stringId + ": " + ref.data + "\r\n");
-            progress.step();
-        }
+    private static void writeSectionChange(FormatWriter writer, int lastPosition) throws IOException {
+        writer.comment("Male entries section end");
+        writer.comment("Female entries section begin (ends at position " + lastPosition + ")");
     }
 
     /**
@@ -635,8 +501,9 @@ public class TlkFile {
         /**
          * Zero-based index of this entry in the file's string-ref table, counted across both
          * sections: positions {@code 0} to {@code entry1Count - 1} are the male section, the
-         * following {@code entry2Count} the female one. Not stored in the file; written to XML as
-         * {@code <position>} so that {@link HuffmanCompression} can restore the original order.
+         * following {@code entry2Count} the female one. Not stored in the file; exported (as XML
+         * {@code <position>}, CSV column or TXT line order) so that {@link HuffmanCompression}
+         * can restore the original order.
          */
         public int position;
 

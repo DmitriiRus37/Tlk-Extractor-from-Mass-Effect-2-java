@@ -200,11 +200,20 @@ class TlkFileSampleTest {
         Path out = dir.resolve("sample.txt");
         SampleFixture.tlk().storeToFile(out.toString(), FileFormat.TXT, null);
 
-        StringBuilder expected = new StringBuilder();
+        StringBuilder expected = new StringBuilder("# TLKToolVersion=1.0.4\r\n");
+        int index = 0;
         for (TlkFile.TlkStringRef r : SampleFixture.refs()) {
-            expected.append(r.stringId).append(": ").append(r.data).append("\r\n");
+            if (index == 0) {
+                expected.append("# Male entries section begin (ends at position 103969)\r\n");
+            } else if (index == SampleFixture.MALE_COUNT) {
+                expected.append("# Male entries section end\r\n# Female entries section begin (ends at position 105123)\r\n");
+            }
+            index++;
+            expected.append(r.stringId).append(": ").append(r.data == null ? "\\N" : TxtFormat.escape(r.data)).append("\r\n");
         }
-        assertTrue(expected.indexOf("-2147319074: null\r\n") >= 0);
+        expected.append("# Female entries section end\r\n");
+        assertTrue(expected.indexOf("\r\n-2147319074: \\N\r\n") >= 0);
+        assertTrue(expected.indexOf("\r\n218733: Капитан Бейли\r\n") >= 0);
         assertArrayEquals(expected.toString().getBytes(StandardCharsets.UTF_8), Files.readAllBytes(out));
     }
 

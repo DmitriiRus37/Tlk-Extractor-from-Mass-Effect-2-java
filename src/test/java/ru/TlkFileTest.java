@@ -694,21 +694,29 @@ class TlkFileTest {
         }
 
         @Test
-        void writesIdColonTextLinesWithCrLf() throws Exception {
-            assertEquals("100: Hello\r\n-7: null\r\n101: \r\n100: two\nlines\r\n",
+        void writesTxtHeaderSectionsAndEscapedLines() throws Exception {
+            assertEquals("# TLKToolVersion=1.0.4\r\n"
+                            + "# Male entries section begin (ends at position 2)\r\n"
+                            + "100: Hello\r\n-7: \\N\r\n101: \r\n"
+                            + "# Male entries section end\r\n"
+                            + "# Female entries section begin (ends at position 3)\r\n"
+                            + "100: two\\nlines\r\n"
+                            + "# Female entries section end\r\n",
                     export(load(asciiFile()), FileFormat.TXT, "out.txt"));
         }
 
         @Test
-        void csvIsTheSamePlainListing() throws Exception {
-            TlkFile t = load(asciiFile());
-            assertEquals(export(t, FileFormat.TXT, "a.txt"), export(t, FileFormat.CSV, "a.csv"));
+        void writesCsvWithBomVersionHeaderAndQuotedFields() throws Exception {
+            assertEquals("\uFEFFTLKToolVersion,1.0.4\r\nid,position,hasText,text\r\n"
+                            + "100,0,true,Hello\r\n-7,1,false,\r\n101,2,true,\r\n100,3,true,\"two\nlines\"\r\n",
+                    export(load(asciiFile()), FileFormat.CSV, "out.csv"));
         }
 
         @Test
         void unicodeTextIsUtf8() throws Exception {
-            assertEquals("1: " + CYRILLIC + " " + EMOJI + "\r\n",
-                    export(load(new TlkTestFile().male(1, CYRILLIC + " " + EMOJI)), FileFormat.TXT, "u.txt"));
+            TlkFile t = load(new TlkTestFile().male(1, CYRILLIC + " " + EMOJI));
+            assertTrue(export(t, FileFormat.TXT, "u.txt").contains("\r\n1: " + CYRILLIC + " " + EMOJI + "\r\n"));
+            assertTrue(export(t, FileFormat.CSV, "u.csv").endsWith("\r\n1,0,true,\"" + CYRILLIC + " " + EMOJI + "\"\r\n"));
         }
 
         @Test
@@ -731,16 +739,25 @@ class TlkFileTest {
             Path out = dir.resolve("switch.out");
             t.storeToFile(out.toString(), FileFormat.XML, null);
             t.storeToFile(out.toString(), FileFormat.TXT, null);
-            assertTrue(TestSupport.readUtf8(out).startsWith("100: Hello\r\n"));
+            assertTrue(TestSupport.readUtf8(out).startsWith("# TLKToolVersion=1.0.4\r\n"));
         }
 
         @Test
-        void zeroEntryFileGivesEmptyTextFile() throws Exception {
+        void zeroEntryFileGivesOnlyTheHeaders() throws Exception {
             TlkFile t = load(new TlkTestFile().treeNodeCount(0).dataLen(0));
-            Path out = dir.resolve("empty.txt");
-            t.storeToFile(out.toString(), FileFormat.TXT, null);
-            assertTrue(Files.isRegularFile(out));
-            assertEquals(0, Files.size(out));
+            assertEquals("# TLKToolVersion=1.0.4\r\n# Male entries section begin (ends at position -1)\r\n"
+                    + "# Male entries section end\r\n# Female entries section begin (ends at position -1)\r\n"
+                    + "# Female entries section end\r\n", export(t, FileFormat.TXT, "empty.txt"));
+            assertEquals("\uFEFFTLKToolVersion,1.0.4\r\nid,position,hasText,text\r\n", export(t, FileFormat.CSV, "empty.csv"));
+        }
+
+        @Test
+        void csvRejectsAnUnpairedSurrogateButTxtEscapesIt() throws Exception {
+            TlkFile t = load(new TlkTestFile().male(1, "ok").male(2, "a\uD800b"));
+            IOException e = assertThrows(IOException.class, () -> export(t, FileFormat.CSV, "bad.csv"));
+            assertEquals("String 2 (position 1) cannot be written as CSV: it contains the unpaired surrogate U+D800,"
+                    + " which UTF-8 cannot encode (use TXT instead)", e.getMessage());
+            assertTrue(export(t, FileFormat.TXT, "ok.txt").contains("\r\n2: a\\uD800b\r\n"));
         }
 
         @Test

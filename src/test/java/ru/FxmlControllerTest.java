@@ -4,6 +4,7 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
+import javafx.stage.FileChooser;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,20 +15,24 @@ import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * The controller behind {@code app.fxml}, loaded through the real FXML. Needs a JavaFX toolkit;
  * skipped where none can start (see {@link JavaFxToolkit}). The file-chooser handlers are not
- * tested: they open native dialogs, which the headless platform does not support.
+ * tested: they open native dialogs, which the headless platform does not support (their
+ * extension filters are, through {@code formatFilters}).
  *
  * <p>Conversions run on a background thread, so the tests start them on the JavaFX thread and
  * then wait until the START button is enabled again.
@@ -97,6 +102,8 @@ class FxmlControllerTest {
         assertNotNull(controller.getCheckBoxDebugXmlToTlk());
         assertNotNull(controller.getStatusXmlToTlk());
         assertNotNull(controller.getProgressBarXmlToTlk());
+        assertNotNull(controller.getChoiceBoxFormatTlkToXml());
+        assertNotNull(controller.getChoiceBoxFormatXmlToTlk());
     }
 
     @Test
@@ -151,6 +158,7 @@ class FxmlControllerTest {
             assertTrue(controller.getStartTlkToXml().isDisabled());
             assertTrue(controller.getButtonToSelectInputTlkFile().isDisabled());
             assertTrue(controller.getTextFieldOutputPathTlkToXml().isDisabled());
+            assertTrue(controller.getChoiceBoxFormatTlkToXml().isDisabled());
             assertEquals(FxmlController.STATUS_RUNNING, controller.getStatusTlkToXml().getText());
             assertTrue(controller.getProgressBarTlkToXml().progressProperty().isBound());
             return null;
@@ -237,6 +245,119 @@ class FxmlControllerTest {
         controller.getTextFieldInputPathXmlToTlk().setText("  in.xml ");
         JavaFxToolkit.onFxThread(() -> TestSupport.call(controller, "startExportXmlToTlk", TestSupport.types()));
         assertEquals("Select an output file", controller.getStatusXmlToTlk().getText());
+    }
+
+    // ---------------------------------------------------------------- format selection
+
+    @Test
+    void formatChoiceBoxesOfferAllFormatsAndDefaultToXml() {
+        for (javafx.scene.control.ChoiceBox<FileFormat> box : Arrays.asList(controller.getChoiceBoxFormatTlkToXml(),
+                controller.getChoiceBoxFormatXmlToTlk())) {
+            assertEquals(Arrays.asList(FileFormat.XML, FileFormat.TXT, FileFormat.CSV), box.getItems());
+            assertSame(FileFormat.XML, box.getValue());
+        }
+    }
+
+    @Test
+    void outputFormatFollowsTheOutputFileName() {
+        TextField output = controller.getTextFieldOutputPathTlkToXml();
+        output.setText(dir.resolve("out.csv").toString());
+        assertSame(FileFormat.CSV, controller.getChoiceBoxFormatTlkToXml().getValue());
+        output.setText(dir.resolve("out.TXT").toString());
+        assertSame(FileFormat.TXT, controller.getChoiceBoxFormatTlkToXml().getValue());
+        output.setText(dir.resolve("out.tlk").toString());
+        output.setText("");
+        assertSame(FileFormat.TXT, controller.getChoiceBoxFormatTlkToXml().getValue());
+        assertEquals("", output.getText());
+    }
+
+    @Test
+    void choosingAnOutputFormatChangesTheOutputExtension() {
+        TextField output = controller.getTextFieldOutputPathTlkToXml();
+        output.setText(dir.resolve("out.xml") + " ");
+        controller.getChoiceBoxFormatTlkToXml().setValue(FileFormat.CSV);
+        assertEquals(dir.resolve("out.csv").toString(), output.getText());
+        controller.getChoiceBoxFormatTlkToXml().setValue(FileFormat.TXT);
+        assertEquals(dir.resolve("out.txt").toString(), output.getText());
+
+        // a path without a format extension is left alone
+        output.setText(dir.resolve("out.dat").toString());
+        controller.getChoiceBoxFormatTlkToXml().setValue(FileFormat.XML);
+        assertEquals(dir.resolve("out.dat").toString(), output.getText());
+        output.setText("");
+        controller.getChoiceBoxFormatTlkToXml().setValue(FileFormat.CSV);
+        assertEquals("", output.getText());
+    }
+
+    @Test
+    void inputFormatFollowsTheInputFileName() {
+        TextField input = controller.getTextFieldInputPathXmlToTlk();
+        input.setText("strings.csv");
+        assertSame(FileFormat.CSV, controller.getChoiceBoxFormatXmlToTlk().getValue());
+        input.setText("strings.txt");
+        assertSame(FileFormat.TXT, controller.getChoiceBoxFormatXmlToTlk().getValue());
+        input.setText("strings.dat");
+        assertSame(FileFormat.TXT, controller.getChoiceBoxFormatXmlToTlk().getValue());
+        // choosing the format by hand does not touch the input path
+        controller.getChoiceBoxFormatXmlToTlk().setValue(FileFormat.XML);
+        assertEquals("strings.dat", input.getText());
+        // nor does it change the output format of the other tab
+        assertSame(FileFormat.XML, controller.getChoiceBoxFormatTlkToXml().getValue());
+    }
+
+    @Test
+    void fileDialogFiltersOfferTheSelectedFormatFirst() {
+        List<String> save = new ArrayList<>();
+        for (FileChooser.ExtensionFilter f : FxmlController.formatFilters(FileFormat.CSV, false)) {
+            save.add(f.getDescription() + " " + f.getExtensions());
+        }
+        assertEquals(Arrays.asList("CSV files [*.csv]", "XML files [*.xml]", "TXT files [*.txt]"), save);
+
+        List<String> open = new ArrayList<>();
+        for (FileChooser.ExtensionFilter f : FxmlController.formatFilters(FileFormat.TXT, true)) {
+            open.add(f.getDescription() + " " + f.getExtensions());
+        }
+        assertEquals(Arrays.asList("XML, TXT and CSV files [*.txt, *.xml, *.csv]", "TXT files [*.txt]",
+                "XML files [*.xml]", "CSV files [*.csv]"), open);
+    }
+
+    @Test
+    void textFormatsConvertBothWays() throws Exception {
+        Path tlk = new TlkTestFile().male(1, "Привет, \"мир\"").maleRaw(-2, -1).male(3, "two\nlines").female(1, "Hi")
+                .writeTo(dir.resolve("in.tlk"));
+        for (FileFormat format : Arrays.asList(FileFormat.TXT, FileFormat.CSV)) {
+            Path text = dir.resolve("out." + format.getExtension());
+            controller.getTextFieldInputPathTlkToXml().setText(tlk.toString());
+            controller.getChoiceBoxFormatTlkToXml().setValue(format);
+            controller.getTextFieldOutputPathTlkToXml().setText(text.toString());
+            convertTlkToXml();
+            assertEquals(FxmlController.STATUS_DONE, controller.getStatusTlkToXml().getText());
+            assertTrue(TestSupport.readUtf8(text).contains(format == FileFormat.TXT ? "3: two\\nlines" : "3,2,true,\"two\nlines\""));
+
+            Path back = dir.resolve("back-" + format + ".tlk");
+            controller.getTextFieldInputPathXmlToTlk().setText(text.toString());
+            assertSame(format, controller.getChoiceBoxFormatXmlToTlk().getValue());
+            controller.getTextFieldOutputPathXmlToTlk().setText(back.toString());
+            convertXmlToTlk();
+            assertEquals(FxmlController.STATUS_DONE, controller.getStatusXmlToTlk().getText());
+            TlkFile t = new TlkFile();
+            t.loadTlkData(back.toString());
+            assertEquals(Arrays.asList("Привет, \"мир\"", null, "two\nlines", "Hi"), TlkFileTest.texts(t));
+        }
+    }
+
+    @Test
+    void wrongInputFormatIsReportedInTheStatus() throws Exception {
+        Path xml = TestSupport.resource("/xml/small.xml");
+        controller.getTextFieldInputPathXmlToTlk().setText(xml.toString());
+        controller.getChoiceBoxFormatXmlToTlk().setValue(FileFormat.TXT);
+        controller.getTextFieldOutputPathXmlToTlk().setText(dir.resolve("wrong.tlk").toString());
+
+        convertXmlToTlk();
+
+        String status = controller.getStatusXmlToTlk().getText();
+        assertTrue(status.startsWith(FxmlController.STATUS_FAILED + "Missing header \"# TLKToolVersion=<version>\""), status);
+        assertFalse(controller.getChoiceBoxFormatXmlToTlk().isDisabled());
     }
 
     @Test

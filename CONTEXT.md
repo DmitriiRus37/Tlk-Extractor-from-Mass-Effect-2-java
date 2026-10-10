@@ -12,7 +12,7 @@ Branch: `modernization`.
 | 3 | Tests (~80% coverage) + corner cases | done |
 | 4 | Make it build/run on Java 1.8 – 25 | done |
 | 5 | Find bugs / refactor | done |
-| 6 | Implement 2 more `FileFormat` values | pending |
+| 6 | Implement 2 more `FileFormat` values (TXT, CSV in both directions) | done |
 
 ## Environment
 
@@ -31,7 +31,8 @@ Branch: `modernization`.
   - `TlkFile`: TLK → XML/TXT.
   - `HuffmanCompression`: XML → TLK.
   - Helpers: `BitArray` (copied from OpenJDK, GPLv2+CPE; the repo has no LICENSE file), `BitConverter` (.NET-style), `PositionInputStream`.
-  - Enums: `Endian`, `FileFormat` (`TXT`, `CSV`, `XML`).
+  - `FileFormat` (`TXT`, `CSV`, `XML`); `Endian` was removed in step 5.
+  - Format I/O (since step 6): `XmlFormat`, `TxtFormat`, `CsvFormat`, sharing `TlkEntry`, `InputFile` and `FormatWriter`.
   - GUI: `App` and `FxmlController`, with `app.fxml`.
 - TLK layout:
   - Little-endian header: magic `7040084` (`"Tlk\0"`), version, min version, male entries, female entries, tree nodes, data length.
@@ -154,7 +155,7 @@ Branch: `modernization`.
     - Unchecked exceptions instead of `throws Exception`.
   - Removed: `Endian`, `TlkFile.Wrap`/`GetString`/`baseStreamSeek`/`prettyXmlFile`, `BitArray.getBit`, `App.getPrimaryStage`, the controller's dead fields.
   - New `TlkHeader` constants (`SIZE`, `MAGIC`, `XBOX_MAGIC`, …) and `write(OutputStream)` on header, string-ref and node.
-- **Format dispatch:** `storeToFile` and `loadInputData` both `switch` on `FileFormat`; a new format just adds a `case`. CSV still produces the TXT listing.
+- **Format dispatch:** `storeToFile` and `loadInputData` both `switch` on `FileFormat`; a new format just adds a `case`. Superseded in step 6: the XML reader/writer and the `XML_*` constants moved to `XmlFormat`, and `loadInputData` accepts all three formats.
 - Facts from the C# original (jgoclawski/me2-tlk-tool):
   - The localizable mask really is `0x8000000` (bit 27).
   - The debug prefix is applied only to ids ≥ 0 that lack that bit.
@@ -170,6 +171,42 @@ Branch: `modernization`.
   - No tail sharing in the writer.
   - No Xbox (big-endian) support.
   - Female-only ids aren't recoverable because the XML has no section marker.
+
+## Step 6: TXT and CSV formats
+
+- `TXT` and `CSV` now work in both directions, like XML. On the sample, TLK→fmt→TLK→XML is byte-identical to the direct XML export for both formats.
+- **TXT** (`TxtFormat`):
+  - Header line `# TLKToolVersion=1.0.4`, then one `<id>: <text>` line per entry; line order is position order.
+  - `\N` means no text. Escapes: `\\`, `\n`, `\r`, `\t`, `\uXXXX`.
+  - `#` comments and blank lines are ignored.
+  - Written with CRLF; any line ending is read; an optional BOM is accepted.
+  - The old headerless listing is rejected.
+- **CSV** (`CsvFormat`, RFC 4180):
+  - BOM + CRLF, a `TLKToolVersion,1.0.4` record, then the header `id,position,hasText,text`.
+  - Columns are found by name in any order and case; `hasText` accepts `true`/`false` in any case.
+  - Strict quoting with line-numbered errors.
+  - Can't hold unpaired surrogates (use TXT).
+- Shared model:
+  - Entry classes: `TlkEntry`, `InputFile` (version + entries), `FormatWriter` (`begin`/`comment`/`entry`/`end`).
+  - Every format goes through the same version check, CRLF→LF, debug prefix, position sort, third-id rejection and Huffman build.
+  - `FileFormat.getExtension()` and `fromFileName(String)`.
+- GUI:
+  - `ChoiceBox<FileFormat>` per tab (`choiceBoxFormatTlkToXml`, `choiceBoxFormatXmlToTlk`), defaulting to XML. The format follows the file extension, and the output extension follows the format.
+  - Per-format file filters. The first tab is renamed "Create XML/TXT/CSV"; the window is 40 px taller.
+- Sample round trips (warm JVM, JDK 25):
+
+  | Format | File size | Full chain |
+  |---|---|---|
+  | TXT | 7.54 MB | ~0.52 s |
+  | CSV | 8.58 MB | ~0.52 s |
+  | XML | 17.8 MB | ~0.58 s |
+
+- Tests: JDK 25 417/0 skipped, JDK 11 417/1 skipped, Corretto 8 398/0. Core coverage 99.4% line / 97.5% branch.
+- Limitations:
+  - CRLF inside texts becomes LF in every format (as in the C# tool).
+  - TXT trailing spaces can be lost to editors that trim them.
+  - Excel in `;`-separator locales needs Data > From Text/CSV.
+  - The save dialog doesn't append a missing extension.
 
 ## Known bugs found in steps 1–3
 

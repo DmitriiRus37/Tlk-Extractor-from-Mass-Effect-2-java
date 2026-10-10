@@ -1,13 +1,7 @@
 package ru;
 
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,10 +22,10 @@ import java.util.Set;
 import java.util.function.DoubleConsumer;
 
 /**
- * Builds a Mass Effect 2 {@code .tlk} file from the XML written by {@link TlkFile}: the
- * "Create TLK" half of the tool.
+ * Builds a Mass Effect 2 {@code .tlk} file from the XML, TXT or CSV file written by
+ * {@link TlkFile}: the "Create TLK" half of the tool.
  *
- * <p>Usage: {@link #loadInputData(String, FileFormat, boolean)} parses the XML, sorts the entries
+ * <p>Usage: {@link #loadInputData(String, FileFormat, boolean)} parses the file, sorts the entries
  * by their original position and builds a Huffman code from the character frequencies of all
  * strings; {@link #saveToTlkFile(String, DoubleConsumer)} then encodes the strings and writes
  * header, string refs, tree and data in the layout described in {@link TlkFile}. An instance can
@@ -40,8 +34,9 @@ import java.util.function.DoubleConsumer;
  * <p>Differences from the C# original, which this class otherwise follows: identical strings are
  * stored once and share their bit offset (the game's files do the same; shared tails are not
  * looked for), the Huffman tree is built deterministically (ties are broken by first occurrence),
- * an XML file without text gives a TLK file without tree instead of an error, and files from tool
- * versions before 1.0.3 are rejected instead of only causing a warning.
+ * a file without text gives a TLK file without tree instead of an error, files from tool
+ * versions before 1.0.3 are rejected instead of only causing a warning, and TXT and CSV files can
+ * be read as well as XML.
  */
 class HuffmanCompression {
 
@@ -59,11 +54,14 @@ class HuffmanCompression {
     private static final String CRLF = "\r\n";
 
     /**
-     * {@code TLKToolVersion} attribute of the loaded XML ({@link TlkFile} writes 1.0.4), or
-     * {@link #DEFAULT_TOOL_VERSION} before loading and if the attribute is missing.
+     * {@code TLKToolVersion} of the loaded file ({@link TlkFile} writes {@value TlkFile#TOOL_VERSION}),
+     * or {@link #DEFAULT_TOOL_VERSION} before loading and for an XML file without the attribute.
      */
     private String inputFileVersion = DEFAULT_TOOL_VERSION;
-    /** Entries read from the XML, sorted by position after loading. */
+    /**
+     * Entries read from the file, with CRLF line breaks replaced and the debug prefix added,
+     * sorted by position.
+     */
     private final List<TlkEntry> inputData = new ArrayList<>();
     /**
      * Number of occurrences of each character, terminators included, over all distinct texts, in
@@ -83,32 +81,6 @@ class HuffmanCompression {
      * before {@link #saveToTlkFile(String, DoubleConsumer)}.
      */
     HuffmanCompression() {
-    }
-
-    /** One {@code <string>} element of the input XML. */
-    private static final class TlkEntry {
-        /** String id from {@code <id>}. */
-        final int stringId;
-        /** Index of the entry in the original string-ref table, from {@code <position>}. */
-        final int position;
-        /**
-         * Text to encode, without terminator but with the debug prefix if requested; {@code null}
-         * if the entry has no text.
-         */
-        final String data;
-
-        /**
-         * Creates an entry.
-         *
-         * @param stringId string id
-         * @param position index in the original string-ref table
-         * @param data     text, or {@code null} for an entry without text
-         */
-        TlkEntry(int stringId, int position, String data) {
-            this.stringId = stringId;
-            this.position = position;
-            this.data = data;
-        }
     }
 
     /**
@@ -234,36 +206,99 @@ class HuffmanCompression {
      * Loads a file written by {@link TlkFile} and prepares the Huffman coding for it, replacing
      * anything loaded before. If loading fails, the instance is left empty.
      *
-     * <p>Reads every {@code <string>} element (see {@link #readXml(Path, boolean)}), sorts the
+     * <p>Reads the entries with the reader of the format ({@link XmlFormat#read(Path)},
+     * {@link TxtFormat#read(Path)} or {@link CsvFormat#read(Path)}, which also checks the tool
+     * version with {@link #checkToolVersion(String, String, String, Path)}), then treats every
+     * format alike: replaces CRLF line breaks in the texts with LF (as the C# original does, since
+     * the game shows CRLF as two line breaks), adds the debug prefix if requested, sorts the
      * entries by position, checks that no id occurs more than twice (a TLK file has room for a
      * male and a female variant of a string, nothing more) and builds the Huffman tree and codes
      * ({@link #prepareHuffmanCoding()}).
      *
      * @param fileName     path of the file
-     * @param format       input format; only {@link FileFormat#XML} is supported
-     * @param debugVersion if {@code true}, every localizable string is prefixed with
+     * @param format       input format
+     * @param debugVersion if {@code true}, every localizable string (id not negative and
+     *                     {@link #NON_LOCALIZABLE_FLAG} clear) is prefixed with
      *                     {@code "(#<id>) "} so that its id is visible in game
-     * @throws IllegalArgumentException if {@code format} is not {@link FileFormat#XML}
-     * @throws IOException              if the file cannot be read, is not well-formed XML, is not a
-     *                                  {@code <tlkFile>} document, was written by a tool version
-     *                                  older than {@value #MIN_TOOL_VERSION}, has an invalid
-     *                                  {@code <id>}, {@code <position>} or no-text
-     *                                  {@code <data>}, or has an id more than twice; the message
-     *                                  names the file and the problem
+     * @throws IOException if the file cannot be read, is malformed (not well-formed XML, not a
+     *                     {@code <tlkFile>} document, a TXT or CSV file without its header or with
+     *                     a malformed line, an invalid id, position or no-text marker, ...), was
+     *                     written by a tool version older than {@value #MIN_TOOL_VERSION}, or has
+     *                     an id more than twice; the message names the file and the problem (and
+     *                     the line, where there is one)
      */
     public void loadInputData(String fileName, FileFormat format, boolean debugVersion) throws IOException {
         reset();
         try {
-            if (format != FileFormat.XML) {
-                throw new IllegalArgumentException("Only XML input is supported, not " + format);
+            Path path = Paths.get(fileName);
+            InputFile input;
+            switch (format) {
+                case XML:
+                    input = XmlFormat.read(path);
+                    break;
+                case TXT:
+                    input = TxtFormat.read(path);
+                    break;
+                case CSV:
+                    input = CsvFormat.read(path);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported input format: " + format);
             }
-            readXml(Paths.get(fileName), debugVersion);
+            inputFileVersion = input.toolVersion;
+            for (TlkEntry entry : input.entries) {
+                inputData.add(prepareEntry(entry, debugVersion));
+            }
             inputData.sort(Comparator.comparingInt(e -> e.position));
             checkIdOccurrences(fileName);
             prepareHuffmanCoding();
         } catch (IOException | RuntimeException e) {
             reset();
             throw e;
+        }
+    }
+
+    /**
+     * Prepares the text of an entry for encoding: CRLF line breaks become LF and, if
+     * {@code debugVersion} is set, the id is not negative and the {@link #NON_LOCALIZABLE_FLAG} is
+     * clear, the text is prefixed with {@code "(#<id>) "}.
+     *
+     * @param entry        the entry as read from the file
+     * @param debugVersion whether to add the debug prefix
+     * @return {@code entry} itself if it has no text, otherwise an entry with the prepared text
+     */
+    private static TlkEntry prepareEntry(TlkEntry entry, boolean debugVersion) {
+        if (entry.data == null) {
+            return entry;
+        }
+        String data = entry.data.replace(CRLF, "\n");
+        if (debugVersion && entry.stringId >= 0 && (entry.stringId & NON_LOCALIZABLE_FLAG) == 0) {
+            data = "(#" + entry.stringId + ") " + data;
+        }
+        return new TlkEntry(entry.stringId, entry.position, data);
+    }
+
+    /**
+     * Checks the tool version declared by an input file; shared by the readers of all formats.
+     *
+     * @param version    the version, e.g. {@code "1.0.4"}
+     * @param formatName name of the format, for the error message
+     * @param note       appended to the version in the error message (e.g. why it was assumed);
+     *                   may be empty
+     * @param file       the file, for the error message
+     * @throws IOException if the version is not a dotted list of numbers or is older than
+     *                     {@value #MIN_TOOL_VERSION}
+     */
+    static void checkToolVersion(String version, String formatName, String note, Path file) throws IOException {
+        int comparison;
+        try {
+            comparison = compareVersions(version, MIN_TOOL_VERSION);
+        } catch (NumberFormatException e) {
+            throw new IOException("Invalid " + XmlFormat.VERSION_ATTRIBUTE + " \"" + version + "\": " + file, e);
+        }
+        if (comparison < 0) {
+            throw new IOException("The " + formatName + " file was written by TLK tool version " + version + note
+                    + "; files from versions before " + MIN_TOOL_VERSION + " are not supported: " + file);
         }
     }
 
@@ -348,198 +383,6 @@ class HuffmanCompression {
             out.append(huffmanCodes.get(text.charAt(i)));
         }
         out.append(huffmanCodes.get('\0'));
-    }
-
-    /**
-     * Parses the XML file and appends its entries to {@link #inputData}, in document order.
-     *
-     * <p>The root element must be {@code <tlkFile>}; its {@code TLKToolVersion} attribute is
-     * stored in {@link #inputFileVersion} (missing: {@link #DEFAULT_TOOL_VERSION}) and must be at
-     * least {@value #MIN_TOOL_VERSION}. Every {@code <string>} element below it becomes an entry
-     * (see {@link #readEntry(XMLStreamReader, boolean, Path)}). DTDs and external entities are
-     * not processed.
-     *
-     * @param file         the XML file
-     * @param debugVersion whether to add the {@code "(#<id>) "} prefix
-     * @throws IOException if the file cannot be read or has invalid content
-     */
-    private void readXml(Path file, boolean debugVersion) throws IOException {
-        XMLInputFactory factory = XMLInputFactory.newInstance();
-        factory.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
-        factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
-        factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(file))) {
-            XMLStreamReader reader = factory.createXMLStreamReader(in);
-            try {
-                readRoot(reader, file);
-                while (reader.hasNext()) {
-                    if (reader.next() == XMLStreamConstants.START_ELEMENT
-                            && TlkFile.XML_STRING.equals(reader.getLocalName())) {
-                        inputData.add(readEntry(reader, debugVersion, file));
-                    }
-                }
-            } finally {
-                reader.close();
-            }
-        } catch (XMLStreamException e) {
-            throw new IOException("Malformed XML in " + file + ": " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Moves to the root element, checks its name and the tool version.
-     *
-     * @param reader reader at the start of the document; left at the root's start tag
-     * @param file   the file, for error messages
-     * @throws IOException        if the root is not {@code <tlkFile>} or the version is invalid
-     *                            or too old
-     * @throws XMLStreamException if the XML is malformed
-     */
-    private void readRoot(XMLStreamReader reader, Path file) throws IOException, XMLStreamException {
-        while (reader.next() != XMLStreamConstants.START_ELEMENT) {
-            // skip the prolog: declaration, comments, processing instructions, whitespace
-        }
-        if (!TlkFile.XML_ROOT.equals(reader.getLocalName())) {
-            throw new IOException("Not a TLK XML file (root element <" + reader.getLocalName() + "> instead of <"
-                    + TlkFile.XML_ROOT + ">): " + file);
-        }
-        String version = reader.getAttributeValue(null, TlkFile.XML_VERSION_ATTRIBUTE);
-        inputFileVersion = version == null ? DEFAULT_TOOL_VERSION : version;
-        int comparison;
-        try {
-            comparison = compareVersions(inputFileVersion, MIN_TOOL_VERSION);
-        } catch (NumberFormatException e) {
-            throw new IOException("Invalid " + TlkFile.XML_VERSION_ATTRIBUTE + " \"" + inputFileVersion + "\": " + file, e);
-        }
-        if (comparison < 0) {
-            throw new IOException("The XML file was written by TLK tool version " + inputFileVersion
-                    + (version == null ? " (it has no " + TlkFile.XML_VERSION_ATTRIBUTE + " attribute)" : "")
-                    + "; files from versions before " + MIN_TOOL_VERSION + " are not supported: " + file);
-        }
-    }
-
-    /**
-     * Reads one {@code <string>} element.
-     *
-     * <p>Reads the {@code <id>}, {@code <position>} and {@code <data>} children (missing ones
-     * default to 0, 0 and empty text; other children are ignored). Whether the entry has text is
-     * taken from the {@code hasText} attribute of {@code <data>} if present, otherwise it has text
-     * exactly if the id is not negative (see {@link TlkFile}). Text has its CRLF line breaks
-     * replaced with LF; if {@code debugVersion} is set, the id is not negative and the
-     * {@link #NON_LOCALIZABLE_FLAG} is clear, it is also prefixed with {@code "(#<id>) "}. An entry
-     * without text must have a negative number (normally {@code -1}) as its {@code <data>}.
-     *
-     * @param reader       reader at the {@code <string>} start tag; left at its end tag
-     * @param debugVersion whether to add the debug prefix
-     * @param file         the file, for error messages
-     * @return the entry
-     * @throws IOException        if a value is invalid
-     * @throws XMLStreamException if the XML is malformed
-     */
-    private TlkEntry readEntry(XMLStreamReader reader, boolean debugVersion, Path file)
-            throws IOException, XMLStreamException {
-        int line = reader.getLocation().getLineNumber();
-        int id = 0;
-        int position = 0;
-        String data = "";
-        String hasTextAttribute = null;
-        while (reader.next() != XMLStreamConstants.END_ELEMENT) {
-            if (reader.getEventType() != XMLStreamConstants.START_ELEMENT) {
-                continue;
-            }
-            String name = reader.getLocalName();
-            if (TlkFile.XML_ID.equals(name)) {
-                id = parseInt(readText(reader), name, line, file);
-            } else if (TlkFile.XML_POSITION.equals(name)) {
-                position = parseInt(readText(reader), name, line, file);
-            } else if (TlkFile.XML_DATA.equals(name)) {
-                hasTextAttribute = reader.getAttributeValue(null, TlkFile.XML_HAS_TEXT);
-                data = readText(reader);
-            } else {
-                readText(reader);
-            }
-        }
-
-        boolean hasText = hasTextAttribute == null ? id >= 0 : parseBoolean(hasTextAttribute, line, file);
-        if (!hasText) {
-            if (parseInt(data, TlkFile.XML_DATA, line, file) >= 0) {
-                throw new IOException("The <string> at line " + line + " (id " + id + ") has no text, so its <"
-                        + TlkFile.XML_DATA + "> must be " + TlkFile.XML_NO_TEXT + ", not \"" + data + "\": " + file);
-            }
-            return new TlkEntry(id, position, null);
-        }
-        data = data.replace(CRLF, "\n");
-        if (debugVersion && id >= 0 && (id & NON_LOCALIZABLE_FLAG) == 0) {
-            data = "(#" + id + ") " + data;
-        }
-        return new TlkEntry(id, position, data);
-    }
-
-    /**
-     * Reads the text content of the current element, including that of nested elements, and
-     * moves to its end tag.
-     *
-     * @param reader reader at a start tag
-     * @return the concatenated character data
-     * @throws XMLStreamException if the XML is malformed
-     */
-    private static String readText(XMLStreamReader reader) throws XMLStreamException {
-        StringBuilder text = new StringBuilder();
-        int depth = 1;
-        while (depth > 0) {
-            switch (reader.next()) {
-                case XMLStreamConstants.START_ELEMENT:
-                    depth++;
-                    break;
-                case XMLStreamConstants.END_ELEMENT:
-                    depth--;
-                    break;
-                case XMLStreamConstants.CHARACTERS:
-                case XMLStreamConstants.CDATA:
-                case XMLStreamConstants.SPACE:
-                    text.append(reader.getText());
-                    break;
-                default:
-                    break;
-            }
-        }
-        return text.toString();
-    }
-
-    /**
-     * Parses the integer content of an element, ignoring surrounding whitespace.
-     *
-     * @param text    the content
-     * @param element element name, for the error message
-     * @param line    line of the enclosing {@code <string>}, for the error message
-     * @param file    the file, for the error message
-     * @return the value
-     * @throws IOException if {@code text} is not an integer
-     */
-    private static int parseInt(String text, String element, int line, Path file) throws IOException {
-        try {
-            return Integer.parseInt(text.trim());
-        } catch (NumberFormatException e) {
-            throw new IOException("Invalid <" + element + "> \"" + text + "\" in the <string> at line " + line
-                    + " (not an integer): " + file, e);
-        }
-    }
-
-    /**
-     * Parses a {@code hasText} attribute.
-     *
-     * @param text the attribute value
-     * @param line line of the enclosing {@code <string>}, for the error message
-     * @param file the file, for the error message
-     * @return the value
-     * @throws IOException unless {@code text} is {@code true} or {@code false}
-     */
-    private static boolean parseBoolean(String text, int line, Path file) throws IOException {
-        if ("true".equals(text) || "false".equals(text)) {
-            return Boolean.parseBoolean(text);
-        }
-        throw new IOException("Invalid " + TlkFile.XML_HAS_TEXT + "=\"" + text + "\" in the <string> at line " + line
-                + " (must be true or false): " + file);
     }
 
     /**

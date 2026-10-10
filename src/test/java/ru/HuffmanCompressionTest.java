@@ -270,12 +270,13 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        void onlyXmlInputIsSupported() {
-            for (FileFormat format : Arrays.asList(FileFormat.TXT, FileFormat.CSV)) {
-                HuffmanCompression hc = new HuffmanCompression();
-                assertThrows(IllegalArgumentException.class,
-                        () -> hc.loadInputData(small().toString(), format, false));
-            }
+        void theFormatSelectsTheReader() {
+            HuffmanCompression hc = new HuffmanCompression();
+            IOException txt = assertThrows(IOException.class, () -> hc.loadInputData(small().toString(), FileFormat.TXT, false));
+            assertTrue(txt.getMessage().startsWith("Missing header \"# TLKToolVersion=<version>\""), txt.getMessage());
+            IOException csv = assertThrows(IOException.class, () -> hc.loadInputData(small().toString(), FileFormat.CSV, false));
+            assertTrue(csv.getMessage().startsWith("Missing version record \"TLKToolVersion,<version>\""), csv.getMessage());
+            assertThrows(NullPointerException.class, () -> hc.loadInputData(small().toString(), null, false));
         }
 
         @Test
