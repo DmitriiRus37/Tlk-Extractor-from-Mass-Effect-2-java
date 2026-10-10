@@ -10,7 +10,7 @@ Branch: `modernization`.
 | 1 | Update dependencies + Java to 25 | done |
 | 2 | Javadoc for all classes/methods | done |
 | 3 | Tests (~80% coverage) + corner cases | done |
-| 4 | Make it build/run on Java 1.8 – 25 | pending |
+| 4 | Make it build/run on Java 1.8 – 25 | done |
 | 5 | Find bugs / refactor | pending |
 | 6 | Implement 2 more `FileFormat` values | pending |
 
@@ -22,6 +22,7 @@ Branch: `modernization`.
   - 8: `~/Library/Java/JavaVirtualMachines/corretto-1.8.0_504/Contents/Home` (Corretto 8 ships **no JavaFX**)
 - Maven 3.10.0 (Homebrew) runs on JDK 27 by default, so always `export JAVA_HOME=...` before running `mvn`.
 - Maven Central reachable.
+- **JDK 27 (Homebrew default) hangs** in `TlkFileSampleTest` for over 10 minutes: the quadratic per-bit `LinkedList.get` decoding (bug #10) runs pathologically slowly there. JDK 25 runs the whole suite in about 15 s. This should go away once #10 is fixed.
 - `.idea/misc.xml` gets an `ExternalStorageConfigurationManager` line written by IntelliJ. Don't commit it.
 
 ## Project facts
@@ -79,6 +80,40 @@ Branch: `modernization`.
 - The tests use **reflection on private members** (`TestSupport`, `HuffmanAccess`). Renaming those members means updating the helpers too.
 - GUI tests use JavaFX's headless platform (`glass.platform=Headless`, available only in JavaFX 25+) and are skipped when no toolkit starts. The file-chooser handlers and `App.main` are not covered.
 - Already Java 8-safe: test sources compile with `--release 8`, and JUnit 5.14 / JaCoCo 0.8.15 / Surefire 3.6 run on Java 8.
+
+## Step 4: Java 1.8 – 25
+
+- Single module with JDK-activated profiles; all main, test and jar classes are major version **52**.
+  - Base build: `source/target 1.8`, `-Xlint:-options`.
+  - `release-8` profile (JDK 9+): `maven.compiler.release=8`, also used for javadoc.
+  - `no-javafx` profile: JDK 8–10 when `${java.home}/lib/ext/jfxrt.jar` is missing.
+    - Excludes `App`/`FxmlController` and `AppTest`/`FxmlControllerTest`/`JavaFxToolkit`.
+    - JDK 8 javadoc parses every file of a package on its source path, so the profile copies the non-GUI sources to `target/javadoc-sources` for javadoc.
+  - JDK 8 with a bundled `jfxrt.jar` (Zulu FX, Liberica Full, Oracle) needs nothing special.
+  - `openjfx` profile (JDK 11+) adds the JavaFX deps + javafx-maven-plugin. `javafx-native-access` (JDK 24+) adds `--enable-native-access` (JDK 11–16 reject the flag).
+  - `exec-maven-plugin` 3.6.4 runs the GUI on a JDK 8 with bundled FX (`mvn compile exec:java`).
+- OpenJFX version per JDK (minimum JDK checked from the class versions in the jars):
+
+  | JDK running Maven | JavaFX |
+  |---|---|
+  | [11,17) | 17.0.20 (class 55) |
+  | [17,23) | 21.0.12 (class 61) |
+  | [23,25) | 25.0.4 (class 67) |
+  | [25,) | 27 (class 69) |
+
+- All plugins already run on Java 8 (each declares `requiredJavaVersion` 1.8); no overrides were needed.
+- Core decoupled from the GUI: `TlkFile.storeToFile(String, FileFormat, DoubleConsumer)` replaces the unused `FxmlController` parameter. It is still never called.
+- Results:
+  - Corretto 8: 278 tests run / 24 skipped.
+  - JDK 11: 289 / 26; the JavaFX 17 toolkit starts on the macOS display.
+  - JDK 25: 289 / 25, headless.
+  - Coverage check passes everywhere.
+- CI: `.github/workflows/build.yml` runs a matrix of 8 Zulu `jdk+fx`, 8 Temurin (the no-FX path) and 11/17/21/25 Temurin. Not yet run.
+- Limits:
+  - No GUI on JDK 8 without FX or on JDK 9/10.
+  - The JDK 8 + FX path is untested locally.
+  - GUI tests skip on headless Linux CI except on JDK 25 (`xvfb-run` would fix that).
+  - Bug #11 (charset) is masked in tests by surefire's `-Dfile.encoding=UTF-8` but will hit real JDK 8 users.
 
 ## Known bugs (to fix in step 5)
 

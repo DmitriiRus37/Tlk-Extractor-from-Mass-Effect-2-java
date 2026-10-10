@@ -63,7 +63,11 @@ public class FxmlController {
     /** Not injected: {@code app.fxml} has no element with this {@code fx:id}, so it stays {@code null}. */
     @FXML
     private TextField textFieldStatusTlkToXml;
-    /** Progress bar of the "Create XML" tab; reset to 0 on START, never advanced. */
+    /**
+     * Progress bar of the "Create XML" tab; reset to 0 on START and passed to
+     * {@link TlkFile#storeToFile} as its progress callback, which is never called, so the bar
+     * never advances.
+     */
     @FXML
     public ProgressBar progressBarTlkToXml;
     /**
@@ -131,7 +135,7 @@ public class FxmlController {
         progressBarTlkToXml.setProgress(0.0);
         TlkFile tf = new TlkFile();
         tf.loadTlkData(textFieldInputPathTlkToXml.getText(), true);
-        tf.storeToFile(textFieldIOutputPathTlkToXml.getText(), FileFormat.XML, this);
+        tf.storeToFile(textFieldIOutputPathTlkToXml.getText(), FileFormat.XML, progressBarTlkToXml::setProgress);
         statusTlkToXml.setText("DONE");
     }
 

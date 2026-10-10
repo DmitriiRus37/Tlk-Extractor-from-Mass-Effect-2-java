@@ -128,8 +128,9 @@ public final class PositionInputStream extends FilterInputStream {
     /**
      * Meant to skip exactly {@code count} bytes, but does nothing.
      *
-     * <p>Note: the body is empty, so no bytes are skipped and the position does not change. This
-     * is an overload, not an override, of {@link InputStream#skipNBytes(long)}: calls with an
+     * <p>Note: the body is empty, so no bytes are skipped and the position does not change. On
+     * Java 12 and later this is an overload, not an override, of
+     * {@code InputStream.skipNBytes(long)} (which Java 8 to 11 do not have): calls with an
      * {@code int} argument end up here, calls with a {@code long} still reach the inherited
      * method, which does skip (through {@link #skip(long)}). Nothing in this project calls it.
      *

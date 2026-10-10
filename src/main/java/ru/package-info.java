@@ -16,8 +16,9 @@
  *   <li>{@link ru.TlkFile#loadTlkData(String, boolean)} reads the header, tree and data block,
  *       decodes every string by walking the tree bit by bit, and attaches to each string ref the
  *       text at its bit offset.</li>
- *   <li>{@link ru.TlkFile#storeToFile(String, ru.FileFormat, ru.FxmlController)} writes one
- *       {@code <string>} element per string ref, in file order, and re-indents the result:
+ *   <li>{@link ru.TlkFile#storeToFile(String, ru.FileFormat, java.util.function.DoubleConsumer)}
+ *       writes one {@code <string>} element per string ref, in file order, and re-indents the
+ *       result:
  *       <pre>{@code
  * <tlkFile TLKToolVersion="1.0.4">
  *     <!--Male entries section begin (ends at position 103969)-->
@@ -46,9 +47,10 @@
  * </ol>
  *
  * <h2>Classes</h2>
- * {@link ru.App} starts the JavaFX application and {@link ru.FxmlController} handles the UI
- * defined in {@code app.fxml}. {@link ru.BitArray}, {@link ru.BitConverter},
- * {@link ru.PositionInputStream} and {@link ru.Endian} are helpers that stand in for the .NET
- * classes the C# original relied on; {@link ru.FileFormat} lists the export formats.
+ * {@code App} starts the JavaFX application and {@code FxmlController} handles the UI defined in
+ * {@code app.fxml}; both are left out of builds on a JDK 8 without JavaFX, so they are not linked
+ * from here. {@link ru.BitArray}, {@link ru.BitConverter}, {@link ru.PositionInputStream} and
+ * {@link ru.Endian} are helpers that stand in for the .NET classes the C# original relied on;
+ * {@link ru.FileFormat} lists the export formats.
  */
 package ru;

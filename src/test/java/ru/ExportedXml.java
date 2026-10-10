@@ -13,8 +13,8 @@ import java.util.List;
 
 /**
  * The content of an XML file written by {@link TlkFile#storeToFile(String, FileFormat,
- * FxmlController)}, read with a streaming (StAX) parser so that even the 18 MB export of the
- * sample file is cheap to check. Parsing fails if the file is not well-formed.
+ * java.util.function.DoubleConsumer)}, read with a streaming (StAX) parser so that even the
+ * 18 MB export of the sample file is cheap to check. Parsing fails if the file is not well-formed.
  */
 final class ExportedXml {
 

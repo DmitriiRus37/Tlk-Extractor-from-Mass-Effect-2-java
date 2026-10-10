@@ -4,9 +4,9 @@ package ru;
  * Text formats a TLK string table can be exported to, or imported from.
  *
  * <p>Only {@link #XML} is really supported and it is the only one the GUI uses:
- * {@link TlkFile#storeToFile(String, FileFormat, FxmlController)} writes every other value as the
- * same plain {@code "<id>: <text>"} listing, and {@code HuffmanCompression} ignores the format it
- * is given and always parses XML.
+ * {@link TlkFile#storeToFile(String, FileFormat, java.util.function.DoubleConsumer)} writes every
+ * other value as the same plain {@code "<id>: <text>"} listing, and {@code HuffmanCompression}
+ * ignores the format it is given and always parses XML.
  */
 public enum FileFormat {
     /** Plain text, one {@code "<id>: <text>"} line per entry. Export only. */

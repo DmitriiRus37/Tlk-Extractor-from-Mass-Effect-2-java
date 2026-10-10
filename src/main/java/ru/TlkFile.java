@@ -24,13 +24,14 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.DoubleConsumer;
 
 /**
  * Reads a Mass Effect 2 {@code .tlk} string table and writes it out as XML (or plain text): the
  * "Create XML" half of the tool.
  *
  * <p>Usage: {@link #loadTlkData(String, boolean)} decodes a file into memory, then
- * {@link #storeToFile(String, FileFormat, FxmlController)} writes it. {@link HuffmanCompression}
+ * {@link #storeToFile(String, FileFormat, DoubleConsumer)} writes it. {@link HuffmanCompression}
  * performs the reverse conversion.
  *
  * <h2>File layout</h2>
@@ -72,7 +73,7 @@ public class TlkFile  {
 
     /**
      * Creates an empty instance; call {@link #loadTlkData(String, boolean)} before
-     * {@link #storeToFile(String, FileFormat, FxmlController)}.
+     * {@link #storeToFile(String, FileFormat, DoubleConsumer)}.
      */
     public TlkFile() {
     }
@@ -201,20 +202,23 @@ public class TlkFile  {
      * Writes the loaded strings to a text file, deleting any existing file at that path first.
      *
      * <p>{@link FileFormat#XML} writes the {@code <tlkFile>} document (see
-     * {@link #saveToXmlFile(String, FxmlController)}) and then re-indents it in place
+     * {@link #saveToXmlFile(String, DoubleConsumer)}) and then re-indents it in place
      * ({@link #prettyXmlFile(String)}); any other format writes the plain listing of
-     * {@link #saveToTextFile(String, FxmlController)}. Entries keep their file order (male
+     * {@link #saveToTextFile(String, DoubleConsumer)}. Entries keep their file order (male
      * section, then female). The elapsed time in milliseconds is printed to standard output.
      *
-     * @param fileName   path of the output file
-     * @param ff         output format
-     * @param controller the UI controller, meant for progress reporting; currently unused
+     * @param fileName path of the output file
+     * @param ff       output format
+     * @param progress meant to receive the completed fraction (0 to 1), e.g. the GUI progress
+     *                 bar; may be {@code null}. Currently never called. A plain
+     *                 {@link DoubleConsumer} rather than the GUI controller, so that the
+     *                 conversion classes compile without JavaFX
      * @throws XMLStreamException if writing the XML fails
      * @throws IOException        if the old file cannot be deleted or the new one cannot be
      *                            written or re-read
      * @throws RuntimeException   if re-indenting the XML fails; wraps the cause
      */
-    public void storeToFile(String fileName, FileFormat ff, FxmlController controller) throws XMLStreamException, IOException {
+    public void storeToFile(String fileName, FileFormat ff, DoubleConsumer progress) throws XMLStreamException, IOException {
 
         long start = System.nanoTime();
         Files.deleteIfExists(Paths.get(fileName));
@@ -222,10 +226,10 @@ public class TlkFile  {
         // StringRefs.Sort(CompareTlkStringRef);
 
         if (ff.equals(FileFormat.XML)) {
-            saveToXmlFile(fileName, controller);
+            saveToXmlFile(fileName, progress);
             prettyXmlFile(fileName);
         } else {
-            saveToTextFile(fileName, controller);
+            saveToTextFile(fileName, progress);
         }
 
         System.out.println("storeToFile: "+ (System.nanoTime() - start)/1_000_000);
@@ -302,12 +306,12 @@ public class TlkFile  {
      * charset (UTF-8 on JDK 18 and later), and the {@code FileWriter} is never closed
      * ({@link XMLStreamWriter#close()} does not close the underlying writer).
      *
-     * @param fileName   path of the output file
-     * @param controller the UI controller, meant for progress reporting; currently unused
+     * @param fileName path of the output file
+     * @param progress meant for progress reporting (see {@link #storeToFile}); currently unused
      * @throws XMLStreamException if the XML writer fails
      * @throws IOException        if the file cannot be opened for writing
      */
-    private void saveToXmlFile(String fileName, FxmlController controller) throws XMLStreamException, IOException {
+    private void saveToXmlFile(String fileName, DoubleConsumer progress) throws XMLStreamException, IOException {
         int totalCount = stringRefs.size();
 
         // Creating FileWriter object
@@ -407,10 +411,10 @@ public class TlkFile  {
      * <p>Currently not used by main application, but it works ok. Note: the file is opened in
      * append mode once per line, and write errors are printed and otherwise ignored.
      *
-     * @param fileName   path of the output file; appended to
-     * @param controller the UI controller, meant for progress reporting; currently unused
+     * @param fileName path of the output file; appended to
+     * @param progress meant for progress reporting (see {@link #storeToFile}); currently unused
      */
-    private void saveToTextFile(String fileName, FxmlController controller) {
+    private void saveToTextFile(String fileName, DoubleConsumer progress) {
         int totalCount = stringRefs.size();
 
         for (int i = 0; i < stringRefs.size(); i++) {
