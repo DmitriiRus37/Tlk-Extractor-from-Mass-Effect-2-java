@@ -75,6 +75,19 @@ class HuffmanCompression {
      * {@code i}-th branch from the root, {@code false} = left, {@code true} = right.
      */
     private final Map<Character, BitArray> huffmanCodes = new HashMap<>();
+    /**
+     * The codes of {@link #huffmanCodes} packed for {@link BitWriter#append(long, int)}, indexed by
+     * character: bit {@code i} of {@code codeBits[c]} is code bit {@code i} of {@code c}. Only
+     * filled for codes of at most {@link BitWriter#MAX_PACKED_BITS} bits; {@code null} until a
+     * tree is built.
+     */
+    private long[] codeBits;
+    /**
+     * Length of the code of each character, indexed by character: {@code 0} for a character
+     * without code, {@code -1} for a code too long for {@link #codeBits} (encoded from
+     * {@link #huffmanCodes} instead); {@code null} until a tree is built.
+     */
+    private int[] codeLength;
 
     /**
      * Creates an empty compressor; call {@link #loadInputData(String, FileFormat, boolean)}
@@ -151,6 +164,12 @@ class HuffmanCompression {
      * the order in which {@link TlkFile} reads the data block with {@link BitArray#getRev(int)}.
      */
     static final class BitWriter {
+        /**
+         * Longest code {@link #append(long, int)} accepts: shifted by up to 7 bits to its position
+         * in the current byte, it must still fit into a {@code long}.
+         */
+        static final int MAX_PACKED_BITS = Long.SIZE - 8;
+
         /** Packed bits; grows as needed. */
         private byte[] bytes = new byte[1024];
         /** Number of bits written so far. */
@@ -169,17 +188,49 @@ class HuffmanCompression {
          */
         void append(BitArray code) {
             int length = code.length();
+            ensureRoom(length);
+            for (int i = 0; i < length; i++, bitCount++) {
+                if (code.get(i)) {
+                    bytes[bitCount >>> 3] |= (byte) (1 << (bitCount & 7));
+                }
+            }
+        }
+
+        /**
+         * Appends a code packed into a {@code long}, bit {@code 0} first; does the same as
+         * {@link #append(BitArray)} a byte at a time instead of a bit at a time.
+         *
+         * @param code   the bits, bit {@code i} being code bit {@code i}; bits from {@code length}
+         *               up must be zero
+         * @param length number of bits, from 0 to {@link #MAX_PACKED_BITS}
+         * @throws IllegalStateException if the stream would exceed {@link Integer#MAX_VALUE}
+         *                               bits, the largest bit offset a TLK file can hold
+         */
+        void append(long code, int length) {
+            ensureRoom(length);
+            int index = bitCount >>> 3;
+            int shift = bitCount & 7;
+            long shifted = code << shift;
+            // the bytes from bitCount on are still zero, so OR-ing the shifted code in is enough
+            for (int end = (shift + length + 7) >>> 3, i = 0; i < end; i++) {
+                bytes[index + i] |= (byte) (shifted >>> (8 * i));
+            }
+            bitCount += length;
+        }
+
+        /**
+         * Grows {@link #bytes} so that {@code length} more bits fit.
+         *
+         * @param length number of bits about to be appended
+         * @throws IllegalStateException if the stream would exceed {@link Integer#MAX_VALUE} bits
+         */
+        private void ensureRoom(int length) {
             if (bitCount > Integer.MAX_VALUE - length) {
                 throw new IllegalStateException("The TLK data block would exceed " + Integer.MAX_VALUE + " bits");
             }
             int neededBytes = (int) (((long) bitCount + length + 7) / 8);
             if (neededBytes > bytes.length) {
                 bytes = Arrays.copyOf(bytes, Math.max(neededBytes, 2 * bytes.length));
-            }
-            for (int i = 0; i < length; i++, bitCount++) {
-                if (code.get(i)) {
-                    bytes[bitCount >>> 3] |= (byte) (1 << (bitCount & 7));
-                }
             }
         }
 
@@ -308,6 +359,8 @@ class HuffmanCompression {
         inputData.clear();
         frequencyCount.clear();
         huffmanCodes.clear();
+        codeBits = null;
+        codeLength = null;
         huffmanRoot = null;
     }
 
@@ -380,9 +433,24 @@ class HuffmanCompression {
      */
     private void encode(String text, BitWriter out) {
         for (int i = 0; i < text.length(); i++) {
-            out.append(huffmanCodes.get(text.charAt(i)));
+            encode(text.charAt(i), out);
         }
-        out.append(huffmanCodes.get('\0'));
+        encode('\0', out);
+    }
+
+    /**
+     * Appends the Huffman code of one character, packed if it is short enough.
+     *
+     * @param c   a character with a code
+     * @param out the data block being built
+     */
+    private void encode(char c, BitWriter out) {
+        int length = codeLength[c];
+        if (length >= 0) {
+            out.append(codeBits[c], length);
+        } else {
+            out.append(huffmanCodes.get(c));
+        }
     }
 
     /**
@@ -450,11 +518,23 @@ class HuffmanCompression {
                 texts.add(entry.data);
             }
         }
+        // count into an array (no boxing per character), remembering the order of first occurrence
+        int[] counts = new int[Character.MAX_VALUE + 1];
+        StringBuilder order = new StringBuilder();
         for (String text : texts) {
             for (int i = 0; i < text.length(); i++) {
-                frequencyCount.merge(text.charAt(i), 1, Integer::sum);
+                char c = text.charAt(i);
+                if (counts[c]++ == 0) {
+                    order.append(c);
+                }
             }
-            frequencyCount.merge('\0', 1, Integer::sum);
+            if (counts['\0']++ == 0) {
+                order.append('\0');
+            }
+        }
+        for (int i = 0; i < order.length(); i++) {
+            char c = order.charAt(i);
+            frequencyCount.put(c, counts[c]);
         }
         if (frequencyCount.isEmpty()) {
             return;
@@ -473,11 +553,37 @@ class HuffmanCompression {
         }
         huffmanRoot = queue.poll();
 
+        codeBits = new long[Character.MAX_VALUE + 1];
+        codeLength = new int[Character.MAX_VALUE + 1];
         if (huffmanRoot.isLeaf()) {
-            huffmanCodes.put(huffmanRoot.data, new BitArray(new boolean[]{false}));
+            putCode(huffmanRoot.data, new boolean[]{false}, 1);
         } else {
             buildCodes(huffmanRoot, new boolean[frequencyCount.size()], 0);
         }
+    }
+
+    /**
+     * Stores the code of a character in {@link #huffmanCodes} and, if it is short enough, packed
+     * in {@link #codeBits} and {@link #codeLength}.
+     *
+     * @param c      the character
+     * @param path   the code bits in its first {@code length} elements
+     * @param length the code length
+     */
+    private void putCode(char c, boolean[] path, int length) {
+        huffmanCodes.put(c, new BitArray(Arrays.copyOf(path, length)));
+        if (length > BitWriter.MAX_PACKED_BITS) {
+            codeLength[c] = -1;
+            return;
+        }
+        long bits = 0;
+        for (int i = 0; i < length; i++) {
+            if (path[i]) {
+                bits |= 1L << i;
+            }
+        }
+        codeBits[c] = bits;
+        codeLength[c] = length;
     }
 
     /**
@@ -492,7 +598,7 @@ class HuffmanCompression {
      */
     private void buildCodes(HuffmanNode node, boolean[] path, int depth) {
         if (node.isLeaf()) {
-            huffmanCodes.put(node.data, new BitArray(Arrays.copyOf(path, depth)));
+            putCode(node.data, path, depth);
             return;
         }
         path[depth] = false;

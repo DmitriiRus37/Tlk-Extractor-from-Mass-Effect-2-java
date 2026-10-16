@@ -527,6 +527,25 @@ class HuffmanCompressionTest {
             assertEquals(3000, ones);
             assertEquals((1000 + 2000 * 7 + 7) / 8, packed.length);
         }
+
+        @Test
+        void packedAppendMatchesBitwiseAppend() {
+            java.util.Random random = new java.util.Random(42);
+            HuffmanCompression.BitWriter bitwise = new HuffmanCompression.BitWriter();
+            HuffmanCompression.BitWriter packed = new HuffmanCompression.BitWriter();
+            for (int i = 0; i < 20000; i++) {
+                int length = random.nextInt(HuffmanCompression.BitWriter.MAX_PACKED_BITS + 1);
+                long code = length == 0 ? 0 : random.nextLong() >>> (Long.SIZE - length);
+                boolean[] b = new boolean[length];
+                for (int k = 0; k < length; k++) {
+                    b[k] = (code >>> k & 1) != 0;
+                }
+                bitwise.append(new BitArray(b));
+                packed.append(code, length);
+                assertEquals(bitwise.bitCount(), packed.bitCount());
+            }
+            assertArrayEquals(bitwise.toByteArray(), packed.toByteArray());
+        }
     }
 
     // ---------------------------------------------------------------- version comparison
