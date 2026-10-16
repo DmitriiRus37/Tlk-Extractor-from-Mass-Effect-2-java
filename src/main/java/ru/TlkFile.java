@@ -1,13 +1,18 @@
 package ru;
 
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +22,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.function.DoubleConsumer;
 import java.util.stream.IntStream;
 
@@ -67,6 +74,8 @@ public class TlkFile {
      * Largest part of a TLK file after the header that is read: the most a byte array can hold.
      */
     private static final long MAX_BODY_SIZE = Integer.MAX_VALUE - 8;
+    /** Number of entries {@link #storeToFile(String, FileFormat, DoubleConsumer)} formats per task. */
+    private static final int EXPORT_CHUNK = 2048;
 
     /** Header of the loaded file; {@code null} until {@link #loadTlkData(String)} succeeds. */
     private TlkHeader header;
@@ -217,8 +226,8 @@ public class TlkFile {
      * negative child id is a leaf for the character {@link #leafCharacter(int)}, after which
      * decoding restarts at the root. The {@code '\0'} leaf ends a string.
      *
-     * <p>The strings are independent, so they are decoded in parallel. Errors are reported as a
-     * sequential decoder would: for the first offset in ref order that fails.
+     * <p>The strings are independent, so they are decoded in parallel ({@link Workers}). Errors
+     * are reported as a sequential decoder would: for the first offset in ref order that fails.
      *
      * @param refs     the string refs
      * @param tree     the Huffman tree, root first, already checked with {@link #checkTree}
@@ -239,12 +248,13 @@ public class TlkFile {
         }
         HuffmanDecoder decoder = new HuffmanDecoder(tree, data);
         String[] texts = new String[offsets.length];
-        IntStream.range(0, offsets.length).parallel().forEach(i -> {
+        // a parallel stream started inside a ForkJoinPool runs in that pool
+        Workers.pool().submit(() -> IntStream.range(0, offsets.length).parallel().forEach(i -> {
             StringBuilder text = new StringBuilder();
             if (decoder.decode(offsets[i], text)) {
                 texts[i] = text.toString();
             }
-        });
+        })).join();
         for (int i = 0; i < offsets.length; i++) {
             if (texts[i] == null) {
                 throw new IOException("Corrupt TLK data (the string at bit offset " + offsets[i]
@@ -306,54 +316,155 @@ public class TlkFile {
         if (stringRefs == null) {
             throw new IllegalStateException("No TLK file loaded; call loadTlkData first");
         }
+        formatWriter(format, new TextBuffer());
         ProgressReporter reporter = new ProgressReporter(progress, stringRefs.size());
-        try (Writer out = Files.newBufferedWriter(Paths.get(fileName), StandardCharsets.UTF_8)) {
-            FormatWriter writer;
-            switch (format) {
-                case XML:
-                    writer = XmlFormat.writer(out);
-                    break;
-                case TXT:
-                    writer = TxtFormat.writer(out);
-                    break;
-                case CSV:
-                    writer = CsvFormat.writer(out);
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unsupported output format: " + format);
-            }
-            write(writer, reporter);
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Paths.get(fileName)))) {
+            write(format, out, reporter);
         }
         reporter.finish();
     }
 
     /**
-     * Writes all string refs with a format writer: the header, then the entries in file order.
-     * Comments mark the beginning and end of the male and female sections; they are written even
-     * if a section is empty.
+     * Returns the writer of a format.
      *
-     * @param writer   the format
-     * @param progress advanced once per entry
+     * @param format the format
+     * @param out    destination
+     * @return the writer
+     * @throws IllegalArgumentException if the format is not supported
+     */
+    private static FormatWriter formatWriter(FileFormat format, Writer out) {
+        switch (format) {
+            case XML:
+                return XmlFormat.writer(out);
+            case TXT:
+                return TxtFormat.writer(out);
+            case CSV:
+                return CsvFormat.writer(out);
+            default:
+                throw new IllegalArgumentException("Unsupported output format: " + format);
+        }
+    }
+
+    /**
+     * Writes all string refs in a format: the header, then the entries in file order. Comments
+     * mark the beginning and end of the male and female sections; they are written even if a
+     * section is empty.
+     *
+     * <p>The entries are formatted and UTF-8 encoded in parallel ({@link Workers}),
+     * {@value #EXPORT_CHUNK} at a time, while the calling thread writes the finished chunks in order and reports the
+     * progress, so the file and the error for a string that cannot be written are the same as
+     * with a sequential export.
+     *
+     * @param format   the format
+     * @param out      destination
+     * @param progress advanced once per entry, on the calling thread
      * @throws IOException if writing fails or a string cannot be represented in the format
      */
-    private void write(FormatWriter writer, ProgressReporter progress) throws IOException {
+    private void write(FileFormat format, OutputStream out, ProgressReporter progress) throws IOException {
         int maleCount = header.entry1Count;
         int lastPosition = header.entry1Count + header.entry2Count - 1;
+        TlkStringRef[] refs = stringRefs.toArray(new TlkStringRef[0]);
+
+        TextBuffer head = new TextBuffer();
+        FormatWriter writer = formatWriter(format, head);
         writer.begin(TOOL_VERSION);
         writer.comment("Male entries section begin (ends at position " + (maleCount - 1) + ")");
-        int index = 0;
-        for (TlkStringRef ref : stringRefs) {
-            if (index++ == maleCount) {
-                writeSectionChange(writer, lastPosition);
-            }
-            writer.entry(ref);
-            progress.step();
+        write(out, head.encode());
+
+        List<CompletableFuture<ByteBuffer>> chunks = new ArrayList<>();
+        for (int from = 0; from < refs.length; from += EXPORT_CHUNK) {
+            int start = from;
+            int end = Math.min(refs.length, from + EXPORT_CHUNK);
+            chunks.add(CompletableFuture.supplyAsync(() -> formatChunk(format, refs, start, end, maleCount, lastPosition),
+                    Workers.pool()));
         }
-        if (index <= maleCount) {
+        try {
+            for (int i = 0; i < chunks.size(); i++) {
+                write(out, join(chunks.get(i)));
+                for (int k = i * EXPORT_CHUNK; k < Math.min(refs.length, (i + 1) * EXPORT_CHUNK); k++) {
+                    progress.step();
+                }
+            }
+        } finally {
+            // after a failure, chunks not yet started are not needed any more
+            chunks.forEach(chunk -> chunk.cancel(false));
+        }
+
+        TextBuffer tail = new TextBuffer();
+        writer = formatWriter(format, tail);
+        if (refs.length <= maleCount) {
             writeSectionChange(writer, lastPosition);
         }
         writer.comment("Female entries section end");
         writer.end();
+        write(out, tail.encode());
+    }
+
+    /**
+     * Formats and encodes the entries {@code start} to {@code end - 1}, with the section change
+     * comments if the female section starts among them.
+     *
+     * @param format       the format
+     * @param refs         all string refs
+     * @param start        index of the first entry
+     * @param end          index after the last entry
+     * @param maleCount    number of entries in the male section
+     * @param lastPosition position of the last entry of the female section
+     * @return the UTF-8 bytes
+     * @throws UncheckedIOException wrapping the {@link IOException} for a string that cannot be
+     *                              represented in the format
+     */
+    private static ByteBuffer formatChunk(FileFormat format, TlkStringRef[] refs, int start, int end, int maleCount,
+                                          int lastPosition) {
+        TextBuffer text = new TextBuffer();
+        FormatWriter writer = formatWriter(format, text);
+        try {
+            for (int i = start; i < end; i++) {
+                if (i == maleCount) {
+                    writeSectionChange(writer, lastPosition);
+                }
+                writer.entry(refs[i]);
+            }
+            return text.encode();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * Waits for a chunk and returns it, rethrowing its failure as thrown in the task.
+     *
+     * @param chunk the chunk
+     * @return its bytes
+     * @throws IOException if formatting the chunk failed with one
+     */
+    private static ByteBuffer join(CompletableFuture<ByteBuffer> chunk) throws IOException {
+        try {
+            return chunk.join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof UncheckedIOException) {
+                throw ((UncheckedIOException) cause).getCause();
+            }
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            if (cause instanceof Error) {
+                throw (Error) cause;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Writes the remaining bytes of a buffer.
+     *
+     * @param out   destination
+     * @param bytes the bytes, backed by an array
+     * @throws IOException if writing fails
+     */
+    private static void write(OutputStream out, ByteBuffer bytes) throws IOException {
+        out.write(bytes.array(), bytes.arrayOffset() + bytes.position(), bytes.remaining());
     }
 
     /**
@@ -366,6 +477,57 @@ public class TlkFile {
     private static void writeSectionChange(FormatWriter writer, int lastPosition) throws IOException {
         writer.comment("Male entries section end");
         writer.comment("Female entries section begin (ends at position " + lastPosition + ")");
+    }
+
+    /** A {@link Writer} that collects text in a {@link StringBuilder}, without locking. */
+    private static final class TextBuffer extends Writer {
+        /** The text written so far. */
+        private final StringBuilder text = new StringBuilder();
+
+        @Override
+        public void write(int c) {
+            text.append((char) c);
+        }
+
+        @Override
+        public void write(char[] chars, int offset, int length) {
+            text.append(chars, offset, length);
+        }
+
+        @Override
+        public void write(String s, int offset, int length) {
+            text.append(s, offset, offset + length);
+        }
+
+        @Override
+        public Writer append(CharSequence s) {
+            text.append(s);
+            return this;
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        /**
+         * Encodes the text as UTF-8, failing on unpaired surrogates like the writer of
+         * {@link Files#newBufferedWriter(Path, java.nio.charset.Charset, java.nio.file.OpenOption...)}.
+         *
+         * @return the bytes, backed by an array
+         * @throws CharacterCodingException if the text contains an unpaired surrogate
+         */
+        ByteBuffer encode() throws CharacterCodingException {
+            char[] chars = new char[text.length()];
+            text.getChars(0, chars.length, chars, 0);
+            return StandardCharsets.UTF_8.newEncoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .encode(CharBuffer.wrap(chars));
+        }
     }
 
     /**
