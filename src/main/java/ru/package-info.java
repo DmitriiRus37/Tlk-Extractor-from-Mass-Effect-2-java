@@ -38,7 +38,7 @@
  *   <li>{@link ru.HuffmanCompression#loadInputData(String, ru.FileFormat, boolean)} parses the
  *       XML (rejecting files written by tool versions before 1.0.3), sorts the entries by
  *       {@code <position>} and builds a new Huffman tree and code table from the character
- *       frequencies of the texts. With the debug flag, which the GUI always sets, each
+ *       frequencies of the texts. With the debug flag (the GUI's "test version" check box), each
  *       localizable string is prefixed with {@code "(#<id>) "}.</li>
  *   <li>{@link ru.HuffmanCompression#saveToTlkFile(String, java.util.function.DoubleConsumer)}
  *       encodes every distinct text once into one bit stream and writes header, string refs,
@@ -48,9 +48,9 @@
  *
  * <h2>Classes</h2>
  * {@code App} starts the JavaFX application and {@code FxmlController} handles the UI defined in
- * {@code app.fxml}; both are left out of builds on a JDK 8 without JavaFX, so they are not linked
- * from here. {@link ru.BitArray} holds the compressed bits; {@link ru.BitConverter} and
- * {@link ru.PositionInputStream} are stand-ins for the .NET classes the C# original relied on.
- * {@link ru.FileFormat} lists the export formats.
+ * {@code app.fxml}, running each conversion on a background thread; both are left out of builds
+ * on a JDK 8 without JavaFX, so they are not linked from here. {@link ru.BitArray} holds the
+ * compressed bits; {@link ru.BitConverter} and {@link ru.PositionInputStream} are stand-ins for
+ * the .NET classes the C# original relied on. {@link ru.FileFormat} lists the export formats.
  */
 package ru;

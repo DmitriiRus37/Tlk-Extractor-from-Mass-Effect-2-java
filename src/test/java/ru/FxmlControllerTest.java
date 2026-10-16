@@ -2,31 +2,35 @@ package ru;
 
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
+import javafx.scene.control.Button;
+import javafx.scene.control.TextField;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * The controller behind {@code app.fxml}, loaded through the real FXML. Needs a JavaFX toolkit;
  * skipped where none can start (see {@link JavaFxToolkit}). The file-chooser handlers are not
  * tested: they open native dialogs, which the headless platform does not support.
+ *
+ * <p>Conversions run on a background thread, so the tests start them on the JavaFX thread and
+ * then wait until the START button is enabled again.
  */
 class FxmlControllerTest {
 
@@ -49,8 +53,30 @@ class FxmlControllerTest {
         assertNotNull(controller);
     }
 
-    private void invoke(final String handler) throws Exception {
+    /** Calls a handler on the JavaFX thread and waits until the conversion it started is over. */
+    private void runAndWait(final String handler, final Button start, final TextField status) throws Exception {
         JavaFxToolkit.onFxThread(() -> TestSupport.call(controller, handler, TestSupport.types()));
+        awaitIdle(start, status);
+    }
+
+    /** Waits until the START button is enabled again and the status no longer says "in progress". */
+    private static void awaitIdle(final Button start, final TextField status) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        while (JavaFxToolkit.onFxThread(() -> start.isDisabled()
+                || FxmlController.STATUS_RUNNING.equals(status.getText()))) {
+            if (System.nanoTime() > deadline) {
+                fail("conversion did not finish; status " + status.getText());
+            }
+            Thread.sleep(10);
+        }
+    }
+
+    private void convertTlkToXml() throws Exception {
+        runAndWait("startExportTlkToXml", controller.getStartTlkToXml(), controller.getStatusTlkToXml());
+    }
+
+    private void convertXmlToTlk() throws Exception {
+        runAndWait("startExportXmlToTlk", controller.getStartXmlToTlk(), controller.getStatusXmlToTlk());
     }
 
     @Test
@@ -59,7 +85,7 @@ class FxmlControllerTest {
         assertNotNull(controller.getButtonToSelectOutputXmlFile());
         assertNotNull(controller.getStartTlkToXml());
         assertNotNull(controller.getTextFieldInputPathTlkToXml());
-        assertNotNull(controller.getTextFieldIOutputPathTlkToXml());
+        assertNotNull(controller.getTextFieldOutputPathTlkToXml());
         assertNotNull(controller.getStatusTlkToXml());
         assertNotNull(controller.getProgressBarTlkToXml());
 
@@ -67,22 +93,19 @@ class FxmlControllerTest {
         assertNotNull(controller.getButtonToSelectOutputTlkFile());
         assertNotNull(controller.getStartXmlToTlk());
         assertNotNull(controller.getTextFieldInputPathXmlToTlk());
-        assertNotNull(controller.getTextFieldIOutputPathXmlToTlk());
+        assertNotNull(controller.getTextFieldOutputPathXmlToTlk());
+        assertNotNull(controller.getCheckBoxDebugXmlToTlk());
         assertNotNull(controller.getStatusXmlToTlk());
         assertNotNull(controller.getProgressBarXmlToTlk());
-
-        // declared @FXML but without a matching fx:id in app.fxml
-        assertNull(controller.getTextFieldStatusTlkToXml());
-        assertNull(controller.getTextFieldStatusXmlToTlk());
     }
 
     @Test
     void initialState() {
-        assertNull(controller.getApp());
         assertFalse(controller.isTextFieldOutputChosenTlkToXml());
         assertFalse(controller.isTextFieldOutputChosenXmlToTlk());
         assertFalse(controller.getStatusTlkToXml().isEditable());
         assertFalse(controller.getStatusXmlToTlk().isEditable());
+        assertFalse(controller.getCheckBoxDebugXmlToTlk().isSelected());
         assertEquals(0.0, controller.getProgressBarTlkToXml().getProgress(), 0.0);
     }
 
@@ -97,23 +120,17 @@ class FxmlControllerTest {
     }
 
     @Test
-    void appCanBeSet() {
-        App app = new App();
-        controller.setApp(app);
-        assertSame(app, controller.getApp());
-    }
-
-    @Test
     void createXmlTabConvertsTlkToXml() throws Exception {
         Path tlk = new TlkTestFile().male(1, "Привет").maleRaw(-2, -1).female(1, "Hi").writeTo(dir.resolve("in.tlk"));
         final Path xml = dir.resolve("out.xml");
         controller.getTextFieldInputPathTlkToXml().setText(tlk.toString());
-        controller.getTextFieldIOutputPathTlkToXml().setText(xml.toString());
+        controller.getTextFieldOutputPathTlkToXml().setText(xml.toString());
 
-        invoke("startExportTlkToXml");
+        convertTlkToXml();
 
-        assertEquals("DONE", controller.getStatusTlkToXml().getText());
+        assertEquals(FxmlController.STATUS_DONE, controller.getStatusTlkToXml().getText());
         assertEquals(1.0, controller.getProgressBarTlkToXml().getProgress(), 0.0);
+        assertFalse(controller.getProgressBarTlkToXml().progressProperty().isBound());
         ExportedXml parsed = ExportedXml.parse(xml);
         assertEquals(3, parsed.strings.size());
         assertEquals("Привет", parsed.strings.get(0).data);
@@ -122,59 +139,112 @@ class FxmlControllerTest {
     }
 
     @Test
-    void startButtonRunsTheConversion() throws Exception {
+    void startButtonRunsTheConversionInTheBackground() throws Exception {
         Path tlk = new TlkTestFile().male(7, "fired").writeTo(dir.resolve("button.tlk"));
         Path xml = dir.resolve("button.xml");
         controller.getTextFieldInputPathTlkToXml().setText(tlk.toString());
-        controller.getTextFieldIOutputPathTlkToXml().setText(xml.toString());
+        controller.getTextFieldOutputPathTlkToXml().setText(xml.toString());
 
         JavaFxToolkit.onFxThread(() -> {
             controller.getStartTlkToXml().fire();
+            // the handler returns at once, with the tab locked until the conversion is over
+            assertTrue(controller.getStartTlkToXml().isDisabled());
+            assertTrue(controller.getButtonToSelectInputTlkFile().isDisabled());
+            assertTrue(controller.getTextFieldOutputPathTlkToXml().isDisabled());
+            assertEquals(FxmlController.STATUS_RUNNING, controller.getStatusTlkToXml().getText());
+            assertTrue(controller.getProgressBarTlkToXml().progressProperty().isBound());
             return null;
         });
+        awaitIdle(controller.getStartTlkToXml(), controller.getStatusTlkToXml());
 
-        assertEquals("DONE", controller.getStatusTlkToXml().getText());
+        assertEquals(FxmlController.STATUS_DONE, controller.getStatusTlkToXml().getText());
+        assertFalse(controller.getButtonToSelectInputTlkFile().isDisabled());
+        assertFalse(controller.getTextFieldOutputPathTlkToXml().isDisabled());
         assertEquals("fired", ExportedXml.parse(xml).strings.get(0).data);
     }
 
     @Test
-    void createTlkTabConvertsXmlToTlkInDebugMode() throws Exception {
+    void createTlkTabConvertsXmlToTlk() throws Exception {
         Path xml = TestSupport.resource("/xml/small.xml");
         Path tlk = dir.resolve("out.tlk");
         controller.getTextFieldInputPathXmlToTlk().setText(xml.toString());
-        controller.getTextFieldIOutputPathXmlToTlk().setText(tlk.toString());
+        controller.getTextFieldOutputPathXmlToTlk().setText(tlk.toString());
 
-        invoke("startExportXmlToTlk");
+        convertXmlToTlk();
 
-        assertEquals("DONE", controller.getStatusXmlToTlk().getText());
+        assertEquals(FxmlController.STATUS_DONE, controller.getStatusXmlToTlk().getText());
         assertEquals(1.0, controller.getProgressBarXmlToTlk().getProgress(), 0.0);
-        // the GUI always converts with the debug prefix: the data block must match a debug load
+        TlkFile t = new TlkFile();
+        t.loadTlkData(tlk.toString());
+        assertEquals("Hello", TlkFileTest.refs(t).get(0).data);
+        assertEquals("Female", TlkFileTest.refs(t).get(7).data);
+    }
+
+    @Test
+    void testVersionCheckBoxAddsTheIdPrefix() throws Exception {
+        Path xml = TestSupport.resource("/xml/small.xml");
+        Path tlk = dir.resolve("debug.tlk");
+        controller.getTextFieldInputPathXmlToTlk().setText(xml.toString());
+        controller.getTextFieldOutputPathXmlToTlk().setText(tlk.toString());
+        controller.getCheckBoxDebugXmlToTlk().setSelected(true);
+
+        convertXmlToTlk();
+
+        assertEquals(FxmlController.STATUS_DONE, controller.getStatusXmlToTlk().getText());
         HuffmanCompression debug = new HuffmanCompression();
         debug.loadInputData(xml.toString(), FileFormat.XML, true);
         byte[] expected = HuffmanAccess.expectedDataBlock(debug);
         byte[] written = Files.readAllBytes(tlk);
         assertArrayEquals(expected, Arrays.copyOfRange(written, written.length - expected.length, written.length));
+        TlkFile t = new TlkFile();
+        t.loadTlkData(tlk.toString());
+        assertEquals("(#100) Hello", TlkFileTest.refs(t).get(0).data);
     }
 
     @Test
-    void conversionErrorsPropagate() {
-        controller.getTextFieldInputPathTlkToXml().setText(dir.resolve("missing.tlk").toString());
-        controller.getTextFieldIOutputPathTlkToXml().setText(dir.resolve("out.xml").toString());
-        assertThrows(NoSuchFileException.class, () -> invoke("startExportTlkToXml"));
-        assertNotEquals("DONE", controller.getStatusTlkToXml().getText());
+    void failedConversionIsReportedInTheStatus() throws Exception {
+        Path missing = dir.resolve("missing.tlk");
+        controller.getTextFieldInputPathTlkToXml().setText(missing.toString());
+        controller.getTextFieldOutputPathTlkToXml().setText(dir.resolve("out.xml").toString());
+
+        convertTlkToXml();
+
+        assertEquals(FxmlController.STATUS_FAILED + "file not found: " + missing, controller.getStatusTlkToXml().getText());
+        assertEquals(0.0, controller.getProgressBarTlkToXml().getProgress(), 0.0);
+        assertFalse(controller.getStartTlkToXml().isDisabled());
     }
 
     @Test
-    @Disabled("Bug: a failed conversion leaves the status at \"in progress\" (the exception is not reported in the UI)")
-    void failedConversionIsReportedInTheStatus() {
-        controller.getTextFieldInputPathTlkToXml().setText(dir.resolve("missing.tlk").toString());
-        controller.getTextFieldIOutputPathTlkToXml().setText(dir.resolve("out.xml").toString());
-        try {
-            invoke("startExportTlkToXml");
-        } catch (Exception expected) {
-            // either way, the status must tell the user
-        }
-        String status = controller.getStatusTlkToXml().getText();
-        assertTrue(!"in progress".equals(status) && !"DONE".equals(status), "status: " + status);
+    void invalidXmlIsReportedInTheStatus() throws Exception {
+        Path xml = TestSupport.resource("/xml/old-version.xml");
+        controller.getTextFieldInputPathXmlToTlk().setText(xml.toString());
+        controller.getTextFieldOutputPathXmlToTlk().setText(dir.resolve("old.tlk").toString());
+
+        convertXmlToTlk();
+
+        String status = controller.getStatusXmlToTlk().getText();
+        assertTrue(status.startsWith(FxmlController.STATUS_FAILED + "The XML file was written by TLK tool version 1.0.2"), status);
+        assertFalse(Files.exists(dir.resolve("old.tlk")));
+    }
+
+    @Test
+    void missingPathsAreReportedWithoutStarting() throws Exception {
+        controller.getTextFieldOutputPathTlkToXml().setText(dir.resolve("out.xml").toString());
+        JavaFxToolkit.onFxThread(() -> TestSupport.call(controller, "startExportTlkToXml", TestSupport.types()));
+        assertEquals("Select an input file", controller.getStatusTlkToXml().getText());
+        assertFalse(controller.getStartTlkToXml().isDisabled());
+
+        controller.getTextFieldInputPathXmlToTlk().setText("  in.xml ");
+        JavaFxToolkit.onFxThread(() -> TestSupport.call(controller, "startExportXmlToTlk", TestSupport.types()));
+        assertEquals("Select an output file", controller.getStatusXmlToTlk().getText());
+    }
+
+    @Test
+    void describeGivesShortMessages() {
+        assertEquals("file not found: a.tlk", FxmlController.describe(new NoSuchFileException("a.tlk")));
+        assertEquals("access denied: b.xml", FxmlController.describe(new AccessDeniedException("b.xml")));
+        assertEquals("broken", FxmlController.describe(new IOException("broken")));
+        assertEquals("IllegalStateException", FxmlController.describe(new IllegalStateException()));
+        assertEquals("IOException", FxmlController.describe(new IOException("")));
     }
 }

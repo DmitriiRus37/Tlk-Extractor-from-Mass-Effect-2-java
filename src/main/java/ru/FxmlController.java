@@ -1,16 +1,21 @@
 package ru;
 
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextField;
 import javafx.stage.FileChooser;
+import javafx.stage.Window;
 import lombok.Getter;
-import lombok.Setter;
 import org.apache.commons.io.FilenameUtils;
 
 import java.io.File;
-import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.NoSuchFileException;
+import java.util.function.DoubleConsumer;
 
 /**
  * Controller of {@code app.fxml}: connects the "Create XML" tab to {@link TlkFile} and the
@@ -18,25 +23,23 @@ import java.io.IOException;
  *
  * <p>Each tab has an input path, an output path (filled in from the input path with the other
  * extension until the user picks an output file explicitly), a START button, a progress bar and
- * a status field. Conversions run synchronously on the JavaFX application thread, so the window
- * freezes while one runs: the intermediate "in progress" status is never actually shown, and the
- * progress bars only show the final state. Exceptions from a conversion go to the thread's
- * uncaught-exception handler and are not reported in the UI.
+ * a status field; the "Create Tlk" tab also has the "test version" check box of the C# original.
+ * A conversion runs on a background thread: while it runs, the tab's buttons and fields are
+ * disabled, the status says {@value #STATUS_RUNNING} and the progress bar first spins (while the
+ * input is read) and then fills up (while the output is written). Afterwards the status says
+ * {@value #STATUS_DONE} or {@value #STATUS_FAILED} followed by the reason.
  *
- * <p>Lombok generates getters and setters for all fields; {@link App} uses {@code setApp}.
+ * <p>Lombok generates getters for all fields, which the tests use.
  */
-@Getter @Setter
+@Getter
 public class FxmlController {
 
-    /** Not used; the input path is read from {@link #textFieldInputPathTlkToXml}. */
-    public File inputTlkFile;
-    /** Not used; the output path is read from {@link #textFieldIOutputPathTlkToXml}. */
-    public File outputXmlFile;
-    /**
-     * The running application, set by {@link App#start(javafx.stage.Stage)} right after the FXML
-     * is loaded; its stage is the owner of the input file choosers.
-     */
-    public App app;
+    /** Status text while a conversion runs. */
+    static final String STATUS_RUNNING = "in progress";
+    /** Status text after a successful conversion. */
+    static final String STATUS_DONE = "DONE";
+    /** Start of the status text after a failed conversion; the reason follows. */
+    static final String STATUS_FAILED = "FAILED: ";
 
     /** "Select" button for the TLK input file; its action is wired in the FXML. */
     @FXML
@@ -52,91 +55,18 @@ public class FxmlController {
     private TextField textFieldInputPathTlkToXml;
     /** Path of the XML file to write; defaults to the input path with a {@code .xml} extension. */
     @FXML
-    private TextField textFieldIOutputPathTlkToXml;
-
-    /** Read-only status field of the "Create XML" tab ("in progress", then "DONE"). */
+    private TextField textFieldOutputPathTlkToXml;
+    /** Read-only status field of the "Create XML" tab. */
     @FXML
     private TextField statusTlkToXml;
-    /** Not injected: {@code app.fxml} has no element with this {@code fx:id}, so it stays {@code null}. */
+    /** Progress bar of the "Create XML" tab. */
     @FXML
-    private TextField textFieldStatusTlkToXml;
-    /**
-     * Progress bar of the "Create XML" tab; reset to 0 on START and passed to
-     * {@link TlkFile#storeToFile} as its progress callback.
-     */
-    @FXML
-    public ProgressBar progressBarTlkToXml;
+    private ProgressBar progressBarTlkToXml;
     /**
      * Whether the user picked the XML output file explicitly; once set, choosing a new input
      * file no longer overwrites the output path.
      */
-    boolean textFieldOutputChosenTlkToXml = false;
-
-    /**
-     * Creates the controller. Called reflectively by {@link javafx.fxml.FXMLLoader}, which then
-     * injects the {@code @FXML} fields; {@link #app} is set afterwards by {@link App}.
-     */
-    public FxmlController() {
-    }
-
-    /**
-     * Handles the input "Select" button of the "Create XML" tab: lets the user pick a
-     * {@code .tlk} file and puts its path into the input field. Unless an output file was
-     * chosen explicitly, the output field is set to the same path with a {@code .xml}
-     * extension. Does nothing if the dialog is cancelled.
-     */
-    @FXML
-    private void selectInputTlkFile() {
-        FileChooser fc = new FileChooser();
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("TLK files", "*.tlk"));
-        File f = fc.showOpenDialog(app.getPrimaryStage());
-        if (f != null) {
-            textFieldInputPathTlkToXml.setText(f.getAbsolutePath());
-            if (!textFieldOutputChosenTlkToXml) {
-                textFieldIOutputPathTlkToXml.setText(FilenameUtils.removeExtension(f.getAbsolutePath())+".xml");
-            }
-        }
-    }
-
-    /**
-     * Handles the output "Select" button of the "Create XML" tab: lets the user pick the XML
-     * file to write and marks the output path as explicitly chosen. Does nothing if the dialog
-     * is cancelled.
-     *
-     * <p>Note: this shows an <em>open</em> dialog, so it can only select an existing file, and
-     * the dialog has no owner window.
-     */
-    @FXML
-    private void selectOutputXmlFile() {
-        FileChooser fc = new FileChooser();
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("XML files", "*.xml"));
-        File f = fc.showOpenDialog(null);
-        if (f!=null) {
-            textFieldIOutputPathTlkToXml.setText(f.getAbsolutePath());
-            textFieldOutputChosenTlkToXml = true;
-        }
-    }
-
-    /**
-     * Handles START on the "Create XML" tab: loads the TLK file named in the input field (as a
-     * PC, little-endian file) and writes it as XML to the path in the output field.
-     *
-     * @throws IOException if the TLK file cannot be read or the XML file cannot be written
-     */
-    @FXML
-    private void startExportTlkToXml() throws IOException {
-        statusTlkToXml.setText("in progress");
-        progressBarTlkToXml.setProgress(0.0);
-        TlkFile tf = new TlkFile();
-        tf.loadTlkData(textFieldInputPathTlkToXml.getText());
-        tf.storeToFile(textFieldIOutputPathTlkToXml.getText(), FileFormat.XML, progressBarTlkToXml::setProgress);
-        statusTlkToXml.setText("DONE");
-    }
-
-    /** Not used; the input path is read from {@link #textFieldInputPathXmlToTlk}. */
-    public File inputXmlFile;
-    /** Not used; the output path is read from {@link #textFieldIOutputPathXmlToTlk}. */
-    public File outputTlkFile;
+    private boolean textFieldOutputChosenTlkToXml;
 
     /** "Select" button for the XML input file; its action is wired in the FXML. */
     @FXML
@@ -152,81 +82,263 @@ public class FxmlController {
     private TextField textFieldInputPathXmlToTlk;
     /** Path of the TLK file to write; defaults to the input path with a {@code .tlk} extension. */
     @FXML
-    private TextField textFieldIOutputPathXmlToTlk;
-    /** Not injected: {@code app.fxml} has no element with this {@code fx:id}, so it stays {@code null}. */
-    @FXML
-    private TextField textFieldStatusXmlToTlk;
-
-    /** Read-only status field of the "Create Tlk" tab ("in progress", then "DONE"). */
-    @FXML
-    private TextField statusXmlToTlk;
+    private TextField textFieldOutputPathXmlToTlk;
     /**
-     * Progress bar of the "Create Tlk" tab; reset to 0 on START and passed to
-     * {@link HuffmanCompression#saveToTlkFile} as its progress callback.
+     * "Test version" check box: if selected, every localizable string of the new TLK file is
+     * prefixed with its id (see {@link HuffmanCompression#loadInputData(String, FileFormat, boolean)}).
      */
     @FXML
-    public ProgressBar progressBarXmlToTlk;
+    private CheckBox checkBoxDebugXmlToTlk;
+    /** Read-only status field of the "Create Tlk" tab. */
+    @FXML
+    private TextField statusXmlToTlk;
+    /** Progress bar of the "Create Tlk" tab. */
+    @FXML
+    private ProgressBar progressBarXmlToTlk;
     /**
      * Whether the user picked the TLK output file explicitly; once set, choosing a new input
      * file no longer overwrites the output path.
      */
-    boolean textFieldOutputChosenXmlToTlk = false;
+    private boolean textFieldOutputChosenXmlToTlk;
 
     /**
-     * Handles the input "Select" button of the "Create Tlk" tab: lets the user pick an
-     * {@code .xml} file and puts its path into the input field. Unless an output file was chosen
-     * explicitly, the output field is set to the same path with a {@code .tlk} extension.
-     *
-     * <p>Note: unlike {@link #selectInputTlkFile()} there is no {@code null} check, so
-     * cancelling the dialog throws a {@link NullPointerException}.
+     * Creates the controller. Called reflectively by {@link javafx.fxml.FXMLLoader}, which then
+     * injects the {@code @FXML} fields.
+     */
+    public FxmlController() {
+    }
+
+    /**
+     * Work done by one conversion on the background thread.
+     */
+    @FunctionalInterface
+    interface Conversion {
+        /**
+         * Runs the conversion.
+         *
+         * @param progress receives the completed fraction (0 to 1) of writing the output
+         * @throws Exception if the conversion fails; its message is shown in the status field
+         */
+        void run(DoubleConsumer progress) throws Exception;
+    }
+
+    /**
+     * Handles the input "Select" button of the "Create XML" tab: lets the user pick a
+     * {@code .tlk} file and puts its path into the input field. Unless an output file was
+     * chosen explicitly, the output field is set to the same path with a {@code .xml}
+     * extension. Does nothing if the dialog is cancelled.
      */
     @FXML
-    private void selectInputXmlFile() {
-        FileChooser fc = new FileChooser();
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("XML files", "*.xml"));
-        File f = fc.showOpenDialog(app.getPrimaryStage());
-        textFieldInputPathXmlToTlk.setText(f.getAbsolutePath());
-        if (!textFieldOutputChosenXmlToTlk) {
-            textFieldIOutputPathXmlToTlk.setText(FilenameUtils.removeExtension(f.getAbsolutePath())+".tlk");
+    private void selectInputTlkFile() {
+        File f = chooseFile(true, textFieldInputPathTlkToXml, "TLK files", "*.tlk");
+        if (f != null) {
+            textFieldInputPathTlkToXml.setText(f.getAbsolutePath());
+            if (!textFieldOutputChosenTlkToXml) {
+                textFieldOutputPathTlkToXml.setText(withExtension(f, "xml"));
+            }
         }
     }
 
     /**
-     * Handles the output "Select" button of the "Create Tlk" tab: lets the user pick the TLK file
-     * to write and marks the output path as explicitly chosen.
-     *
-     * <p>Note: this shows an <em>open</em> dialog without an owner window, so it can only select
-     * an existing file, and there is no {@code null} check, so cancelling the dialog throws a
-     * {@link NullPointerException}.
+     * Handles the output "Select" button of the "Create XML" tab: lets the user choose where to
+     * save the XML file and marks the output path as explicitly chosen. Does nothing if the
+     * dialog is cancelled.
      */
     @FXML
-    private void selectOutputTlkFile() {
-        FileChooser fc = new FileChooser();
-        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("TLK files", "*.tlk"));
-        File f = fc.showOpenDialog(null);
-        textFieldIOutputPathXmlToTlk.setText(f.getAbsolutePath());
-        textFieldOutputChosenXmlToTlk = true;
+    private void selectOutputXmlFile() {
+        File f = chooseFile(false, textFieldOutputPathTlkToXml, "XML files", "*.xml");
+        if (f != null) {
+            textFieldOutputPathTlkToXml.setText(f.getAbsolutePath());
+            textFieldOutputChosenTlkToXml = true;
+        }
     }
 
     /**
-     * Handles START on the "Create Tlk" tab: loads the XML file named in the input field and
-     * writes a TLK file to the path in the output field.
-     *
-     * <p>Note: debug mode is hard-coded on, so every localizable string in the generated file is
-     * prefixed with {@code "(#<id>) "} (see
-     * {@link HuffmanCompression#loadInputData(String, FileFormat, boolean)}).
-     *
-     * @throws IOException if the XML file cannot be read or is invalid, or the TLK file cannot be
-     *                     written
+     * Handles the input "Select" button of the "Create Tlk" tab: lets the user pick an
+     * {@code .xml} file and puts its path into the input field. Unless an output file was chosen
+     * explicitly, the output field is set to the same path with a {@code .tlk} extension. Does
+     * nothing if the dialog is cancelled.
      */
     @FXML
-    private void startExportXmlToTlk() throws IOException {
-        statusXmlToTlk.setText("in progress");
-        progressBarXmlToTlk.setProgress(0.0);
-        HuffmanCompression hc = new HuffmanCompression();
-        hc.loadInputData(textFieldInputPathXmlToTlk.getText(), FileFormat.XML, true);
-        hc.saveToTlkFile(textFieldIOutputPathXmlToTlk.getText(), progressBarXmlToTlk::setProgress);
-        statusXmlToTlk.setText("DONE");
+    private void selectInputXmlFile() {
+        File f = chooseFile(true, textFieldInputPathXmlToTlk, "XML files", "*.xml");
+        if (f != null) {
+            textFieldInputPathXmlToTlk.setText(f.getAbsolutePath());
+            if (!textFieldOutputChosenXmlToTlk) {
+                textFieldOutputPathXmlToTlk.setText(withExtension(f, "tlk"));
+            }
+        }
     }
 
+    /**
+     * Handles the output "Select" button of the "Create Tlk" tab: lets the user choose where to
+     * save the TLK file and marks the output path as explicitly chosen. Does nothing if the
+     * dialog is cancelled.
+     */
+    @FXML
+    private void selectOutputTlkFile() {
+        File f = chooseFile(false, textFieldOutputPathXmlToTlk, "TLK files", "*.tlk");
+        if (f != null) {
+            textFieldOutputPathXmlToTlk.setText(f.getAbsolutePath());
+            textFieldOutputChosenXmlToTlk = true;
+        }
+    }
+
+    /**
+     * Shows a file dialog owned by this controller's window, starting in the directory of the
+     * path currently in {@code field} (and, for a save dialog, with its file name).
+     *
+     * @param open        {@code true} for an open dialog, {@code false} for a save dialog
+     * @param field       field holding the current path, possibly empty
+     * @param description description of the extension filter
+     * @param pattern     extension pattern, e.g. {@code "*.tlk"}
+     * @return the chosen file, or {@code null} if the dialog was cancelled
+     */
+    private static File chooseFile(boolean open, TextField field, String description, String pattern) {
+        FileChooser chooser = new FileChooser();
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(description, pattern));
+        String current = field.getText();
+        if (current != null && !current.trim().isEmpty()) {
+            File file = new File(current.trim()).getAbsoluteFile();
+            File directory = file.getParentFile();
+            if (directory != null && directory.isDirectory()) {
+                chooser.setInitialDirectory(directory);
+            }
+            if (!open) {
+                chooser.setInitialFileName(file.getName());
+            }
+        }
+        Window owner = field.getScene() == null ? null : field.getScene().getWindow();
+        return open ? chooser.showOpenDialog(owner) : chooser.showSaveDialog(owner);
+    }
+
+    /**
+     * Returns the absolute path of a file with its extension replaced.
+     *
+     * @param file      the file
+     * @param extension new extension, without the dot
+     * @return the path ending in {@code "." + extension}
+     */
+    private static String withExtension(File file, String extension) {
+        return FilenameUtils.removeExtension(file.getAbsolutePath()) + "." + extension;
+    }
+
+    /**
+     * Handles START on the "Create XML" tab: converts the TLK file named in the input field to an
+     * XML file at the path in the output field, on a background thread.
+     */
+    @FXML
+    private void startExportTlkToXml() {
+        final String input = textFieldInputPathTlkToXml.getText().trim();
+        final String output = textFieldOutputPathTlkToXml.getText().trim();
+        runInBackground(input, output, progress -> {
+            TlkFile tlk = new TlkFile();
+            tlk.loadTlkData(input);
+            tlk.storeToFile(output, FileFormat.XML, progress);
+        }, progressBarTlkToXml, statusTlkToXml, startTlkToXml, buttonToSelectInputTlkFile,
+                buttonToSelectOutputXmlFile, textFieldInputPathTlkToXml, textFieldOutputPathTlkToXml);
+    }
+
+    /**
+     * Handles START on the "Create Tlk" tab: converts the XML file named in the input field to a
+     * TLK file at the path in the output field, on a background thread. If the "test version" box
+     * is checked, the strings get their id as a prefix.
+     */
+    @FXML
+    private void startExportXmlToTlk() {
+        final String input = textFieldInputPathXmlToTlk.getText().trim();
+        final String output = textFieldOutputPathXmlToTlk.getText().trim();
+        final boolean debugVersion = checkBoxDebugXmlToTlk.isSelected();
+        runInBackground(input, output, progress -> {
+            HuffmanCompression hc = new HuffmanCompression();
+            hc.loadInputData(input, FileFormat.XML, debugVersion);
+            hc.saveToTlkFile(output, progress);
+        }, progressBarXmlToTlk, statusXmlToTlk, startXmlToTlk, buttonToSelectInputXmlFile,
+                buttonToSelectOutputTlkFile, textFieldInputPathXmlToTlk, textFieldOutputPathXmlToTlk,
+                checkBoxDebugXmlToTlk);
+    }
+
+    /**
+     * Runs a conversion on a new daemon thread, reporting its progress and outcome in the tab.
+     * Must be called on the JavaFX application thread. If a path is missing, the status asks for
+     * it and nothing is started.
+     *
+     * @param input      input path
+     * @param output     output path
+     * @param conversion the work to do
+     * @param bar        progress bar of the tab: indeterminate until the conversion reports
+     *                   progress, full when it succeeds, empty when it fails
+     * @param status     status field of the tab
+     * @param controls   controls to disable while the conversion runs
+     */
+    private static void runInBackground(String input, String output, Conversion conversion,
+                                        ProgressBar bar, TextField status, Node... controls) {
+        if (input.isEmpty() || output.isEmpty()) {
+            status.setText(input.isEmpty() ? "Select an input file" : "Select an output file");
+            return;
+        }
+        Task<Void> task = new Task<Void>() {
+            @Override
+            protected Void call() throws Exception {
+                updateProgress(-1, 1);
+                conversion.run(fraction -> updateProgress(fraction, 1));
+                return null;
+            }
+        };
+        task.setOnSucceeded(event -> finish(bar, 1.0, status, STATUS_DONE, controls));
+        task.setOnFailed(event -> finish(bar, 0.0, status, STATUS_FAILED + describe(task.getException()), controls));
+
+        status.setText(STATUS_RUNNING);
+        bar.progressProperty().bind(task.progressProperty());
+        setDisabled(true, controls);
+        Thread thread = new Thread(task, "tlk-conversion");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * Shows the outcome of a conversion and re-enables the tab.
+     *
+     * @param bar        progress bar of the tab
+     * @param progress   final progress to show
+     * @param status     status field of the tab
+     * @param statusText final status
+     * @param controls   controls to enable again
+     */
+    private static void finish(ProgressBar bar, double progress, TextField status, String statusText,
+                               Node... controls) {
+        bar.progressProperty().unbind();
+        bar.setProgress(progress);
+        status.setText(statusText);
+        setDisabled(false, controls);
+    }
+
+    /**
+     * Disables or enables controls.
+     *
+     * @param disabled whether to disable them
+     * @param controls the controls
+     */
+    private static void setDisabled(boolean disabled, Node... controls) {
+        for (Node control : controls) {
+            control.setDisable(disabled);
+        }
+    }
+
+    /**
+     * Turns the exception of a failed conversion into a short message for the status field.
+     *
+     * @param error the exception
+     * @return a description of what went wrong
+     */
+    static String describe(Throwable error) {
+        if (error instanceof NoSuchFileException) {
+            return "file not found: " + error.getMessage();
+        }
+        if (error instanceof AccessDeniedException) {
+            return "access denied: " + error.getMessage();
+        }
+        String message = error.getMessage();
+        return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message;
+    }
 }

@@ -15,11 +15,11 @@
                             <TextField fx:id="textFieldInputPathTlkToXml" layoutX="200.0" layoutY="20.0" prefHeight="30.0" prefWidth="330.0" promptText="Input path" />
                             <Label layoutX="38.0" layoutY="25.0" prefHeight="20.0" prefWidth="120.0" text="Select Input file" textAlignment="CENTER" />
                             <Label layoutX="38.0" layoutY="70.0" prefHeight="20.0" prefWidth="120.0" text="Select Output file" />
-                            <TextField fx:id="textFieldIOutputPathTlkToXml" layoutX="200.0" layoutY="65.0" prefHeight="30.0" prefWidth="330.0" promptText="Output path" />
+                            <TextField fx:id="textFieldOutputPathTlkToXml" layoutX="200.0" layoutY="65.0" prefHeight="30.0" prefWidth="330.0" promptText="Output path" />
                             <ProgressBar fx:id="progressBarTlkToXml" layoutX="201.0" layoutY="156.0" prefHeight="18.0" prefWidth="439.0" progress="0.0" />
                             <Label layoutX="38.0" layoutY="156.0" text="PROGRESS:" />
                             <Label layoutX="38.0" layoutY="194.0" text="STATUS:" />
-                            <TextField fx:id="statusTlkToXml" alignment="CENTER" editable="false" layoutX="200.0" layoutY="189.0" prefHeight="28.0" prefWidth="116.0" promptText="current status" />
+                            <TextField fx:id="statusTlkToXml" editable="false" layoutX="200.0" layoutY="189.0" prefHeight="28.0" prefWidth="440.0" promptText="current status" />
                             <Button fx:id="startTlkToXml" layoutX="201.0" layoutY="111.0" mnemonicParsing="false" onAction="#startExportTlkToXml" prefHeight="28.0" prefWidth="86.0" text="START" />
                             <Button fx:id="buttonToSelectInputTlkFile" layoutX="541.0" layoutY="20.0" mnemonicParsing="false" onAction="#selectInputTlkFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                             <Button fx:id="buttonToSelectOutputXmlFile" layoutX="541.0" layoutY="65.0" mnemonicParsing="false" onAction="#selectOutputXmlFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
@@ -32,12 +32,13 @@
                             <TextField fx:id="textFieldInputPathXmlToTlk" layoutX="200.0" layoutY="20.0" prefHeight="30.0" prefWidth="330.0" promptText="Input path" />
                             <Label layoutX="38.0" layoutY="25.0" prefHeight="20.0" prefWidth="120.0" text="Select Input file" textAlignment="CENTER" />
                             <Label layoutX="38.0" layoutY="70.0" prefHeight="20.0" prefWidth="120.0" text="Select Output file" />
-                            <TextField fx:id="textFieldIOutputPathXmlToTlk" layoutX="200.0" layoutY="65.0" prefHeight="30.0" prefWidth="330.0" promptText="Output path" />
+                            <TextField fx:id="textFieldOutputPathXmlToTlk" layoutX="200.0" layoutY="65.0" prefHeight="30.0" prefWidth="330.0" promptText="Output path" />
                             <ProgressBar fx:id="progressBarXmlToTlk" layoutX="201.0" layoutY="156.0" prefHeight="18.0" prefWidth="439.0" progress="0.0" />
                             <Label layoutX="38.0" layoutY="156.0" text="PROGRESS:" />
                             <Label layoutX="38.0" layoutY="194.0" text="STATUS:" />
-                            <TextField fx:id="statusXmlToTlk" alignment="CENTER" editable="false" layoutX="200.0" layoutY="189.0" prefHeight="28.0" prefWidth="116.0" promptText="current status" />
+                            <TextField fx:id="statusXmlToTlk" editable="false" layoutX="200.0" layoutY="189.0" prefHeight="28.0" prefWidth="440.0" promptText="current status" />
                             <Button fx:id="startXmlToTlk" layoutX="201.0" layoutY="111.0" mnemonicParsing="false" onAction="#startExportXmlToTlk" prefHeight="28.0" prefWidth="86.0" text="START" />
+                            <CheckBox fx:id="checkBoxDebugXmlToTlk" layoutX="310.0" layoutY="116.0" mnemonicParsing="false" text="Test version (shows the string id before every line in game)" />
                             <Button fx:id="buttonToSelectInputXmlFile" layoutX="541.0" layoutY="20.0" mnemonicParsing="false" onAction="#selectInputXmlFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                             <Button fx:id="buttonToSelectOutputTlkFile" layoutX="541.0" layoutY="65.0" mnemonicParsing="false" onAction="#selectOutputTlkFile" prefHeight="30.0" prefWidth="100.0" text="Select" />
                         </children>

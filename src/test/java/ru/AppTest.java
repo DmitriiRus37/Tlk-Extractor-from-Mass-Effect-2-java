@@ -13,8 +13,6 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -25,11 +23,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class AppTest {
 
     @Test
-    void primaryStageIsUnsetBeforeStart() {
-        assertNull(new App().getPrimaryStage());
-    }
-
-    @Test
     void startShowsTheMainWindow() throws Exception {
         JavaFxToolkit.assumeAvailable();
         assumeTrue(JavaFxToolkit.isHeadless() || Boolean.getBoolean("tlk.test.showWindows"),
@@ -37,17 +30,17 @@ class AppTest {
 
         JavaFxToolkit.onFxThread(() -> {
             Stage stage = new Stage();
-            App app = new App();
-            app.start(stage);
+            new App().start(stage);
             try {
-                assertSame(stage, app.getPrimaryStage());
                 assertTrue(stage.isShowing());
                 assertFalse(stage.isResizable());
+                assertEquals(App.TITLE, stage.getTitle());
 
                 Scene scene = stage.getScene();
                 assertNotNull(scene);
                 assertNotNull(scene.lookup("#textFieldInputPathTlkToXml"));
                 assertNotNull(scene.lookup("#startXmlToTlk"));
+                assertNotNull(scene.lookup("#checkBoxDebugXmlToTlk"));
 
                 TabPane tabs = (TabPane) scene.lookup(".tab-pane");
                 List<String> titles = new ArrayList<>();

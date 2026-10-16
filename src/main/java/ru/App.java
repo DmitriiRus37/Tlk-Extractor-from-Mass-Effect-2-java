@@ -5,25 +5,19 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
-import lombok.Getter;
 
 import java.io.IOException;
 
 /**
  * JavaFX entry point of the TLK extractor.
  *
- * <p>Loads the single window from {@code /app.fxml}, hands itself to the {@link FxmlController}
- * (which needs the stage as the owner of its file choosers) and shows the window as
- * non-resizable. All conversion work is started from the controller's event handlers.
+ * <p>Loads the single window from {@code /app.fxml} and shows it as non-resizable. All
+ * conversion work is started from the event handlers of its {@link FxmlController}.
  */
 public class App extends Application {
 
-    /**
-     * The main window, stored by {@link #start(Stage)}; {@code null} before that. Exposed through
-     * a Lombok-generated {@code getPrimaryStage()} so the controller can parent dialogs to it.
-     */
-    @Getter
-    private Stage primaryStage;
+    /** Title of the main window. */
+    static final String TITLE = "Mass Effect 2 TLK Extractor";
 
     /**
      * Creates the application. Instantiated reflectively by the JavaFX launcher, not by
@@ -41,26 +35,22 @@ public class App extends Application {
      */
     @Override
     public void start(Stage primaryStage) throws IOException {
-        this.primaryStage = primaryStage;
-        FXMLLoader loader = new FXMLLoader(getClass().getResource("/app.fxml"));
-        Parent root = loader.load();
-
-        FxmlController controller = loader.getController();
-        controller.setApp(this);
-
+        Parent root = FXMLLoader.load(getClass().getResource("/app.fxml"));
+        primaryStage.setTitle(TITLE);
         primaryStage.setScene(new Scene(root));
-        primaryStage.show();
         primaryStage.setResizable(false);
+        primaryStage.show();
     }
 
     /**
      * Launches the JavaFX application, which instantiates this class and calls
      * {@link #start(Stage)}; returns only after the window has been closed.
      *
-     * @param args command-line arguments; currently not passed on to JavaFX
+     * @param args command-line arguments, passed on to JavaFX (see
+     *             {@link Application#getParameters()})
      */
     public static void main(String[] args) {
-        Application.launch();
+        launch(args);
     }
 
 }
