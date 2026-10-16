@@ -11,7 +11,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.xml.sax.SAXException;
 
 import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.stream.XMLStreamException;
 import java.io.File;
 import java.io.IOException;
 
@@ -125,12 +124,10 @@ public class FxmlController {
      * Handles START on the "Create XML" tab: loads the TLK file named in the input field (as a
      * PC, little-endian file) and writes it as XML to the path in the output field.
      *
-     * @throws IOException        if the TLK file cannot be read or the XML file cannot be
-     *                            written
-     * @throws XMLStreamException if writing the XML fails
+     * @throws IOException if the TLK file cannot be read or the XML file cannot be written
      */
     @FXML
-    private void startExportTlkToXml() throws IOException, XMLStreamException {
+    private void startExportTlkToXml() throws IOException {
         statusTlkToXml.setText("in progress");
         progressBarTlkToXml.setProgress(0.0);
         TlkFile tf = new TlkFile();

@@ -1,6 +1,5 @@
 package ru;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -10,7 +9,6 @@ import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -517,9 +515,29 @@ class TlkFileTest {
         @Test
         void textThatXmlCannotRepresentFailsTheExport() throws IOException {
             // U+0001 is not allowed in XML 1.0, not even as a character reference
-            TlkFile t = load(new TlkTestFile().male(1, "bell\u0001"));
-            String target = dir.resolve("control.xml").toString();
-            assertThrows(RuntimeException.class, () -> t.storeToFile(target, FileFormat.XML, null));
+            for (String text : new String[]{"bell\u0001", "lone \ud800 surrogate", "low \udc00", "end\ud800", "\ufffe", "\uffff"}) {
+                TlkFile t = load(new TlkTestFile().male(7, "ok").male(42, text));
+                String target = dir.resolve("control.xml").toString();
+                IOException e = assertThrows(IOException.class, () -> t.storeToFile(target, FileFormat.XML, null));
+                assertTrue(e.getMessage().startsWith("String 42 (position 1) cannot be written as XML: it contains the character U+"),
+                        e.getMessage());
+            }
+        }
+
+        @Test
+        void startsWithAnXmlDeclaration() throws Exception {
+            Path out = dir.resolve("declaration.xml");
+            load(typicalFile()).storeToFile(out.toString(), FileFormat.XML, null);
+            assertTrue(TestSupport.readUtf8(out).startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<tlkFile TLKToolVersion=\"1.0.4\">\n"));
+        }
+
+        @Test
+        void carriageReturnsAreKept() throws Exception {
+            String text = "a\r\nb\rc\n";
+            Path out = dir.resolve("cr.xml");
+            load(new TlkTestFile().male(1, text)).storeToFile(out.toString(), FileFormat.XML, null);
+            assertTrue(TestSupport.readUtf8(out).contains("<data>a&#13;\nb&#13;c\n</data>"));
+            assertEquals(text, ExportedXml.parse(out).strings.get(0).data);
         }
 
         @Test
@@ -548,7 +566,6 @@ class TlkFileTest {
         }
 
         @Test
-        @Disabled("Bug: the male-end/female-begin comments are only written if the female section is non-empty")
         void sectionCommentsAreBalancedWithoutFemaleEntries() throws Exception {
             ExportedXml xml = export(load(new TlkTestFile().male(1, "a").male(2, "b")));
             assertEquals(Arrays.asList(
@@ -559,7 +576,16 @@ class TlkFileTest {
         }
 
         @Test
-        @Disabled("Bug: storeToFile never closes the FileWriter (saveToXmlFile) and PrintWriter (prettyXmlFile)")
+        void sectionCommentsWithoutMaleEntries() throws Exception {
+            ExportedXml xml = export(load(new TlkTestFile().female(1, "a")));
+            assertEquals(Arrays.asList(
+                    "Male entries section begin (ends at position -1)",
+                    "Male entries section end",
+                    "Female entries section begin (ends at position 0)",
+                    "Female entries section end"), xml.comments);
+        }
+
+        @Test
         void exportDoesNotLeakFileHandles() throws Exception {
             TlkFile t = load(typicalFile());
             Path out = dir.resolve("leak.xml");
@@ -574,8 +600,6 @@ class TlkFileTest {
         }
 
         @Test
-        @Disabled("Bug: the XML is written with the platform default charset but declared UTF-8, so with a "
-                + "non-UTF-8 default (JDK < 18 on Windows, or LANG=C) the export throws XMLStreamException")
         void exportIsUtf8WhateverTheDefaultCharset() throws Exception {
             Path tlk = write(new TlkTestFile().male(1, CYRILLIC));
             Path out = dir.resolve("latin1.xml");
@@ -600,7 +624,7 @@ class TlkFileTest {
         private String export(TlkFile t, FileFormat format, String name) throws Exception {
             Path out = dir.resolve(name);
             t.storeToFile(out.toString(), format, null);
-            return new String(Files.readAllBytes(out), Charset.defaultCharset());
+            return TestSupport.readUtf8(out);
         }
 
         private TlkTestFile asciiFile() {
@@ -624,9 +648,9 @@ class TlkFileTest {
         }
 
         @Test
-        void unicodeTextWithUtf8DefaultCharset() throws Exception {
-            assumeTrue(StandardCharsets.UTF_8.equals(Charset.defaultCharset()), "default charset is not UTF-8");
-            assertEquals("1: " + CYRILLIC + "\r\n", export(load(new TlkTestFile().male(1, CYRILLIC)), FileFormat.TXT, "u.txt"));
+        void unicodeTextIsUtf8() throws Exception {
+            assertEquals("1: " + CYRILLIC + " " + EMOJI + "\r\n",
+                    export(load(new TlkTestFile().male(1, CYRILLIC + " " + EMOJI)), FileFormat.TXT, "u.txt"));
         }
 
         @Test
@@ -642,11 +666,10 @@ class TlkFileTest {
             Path out = dir.resolve("switch.out");
             t.storeToFile(out.toString(), FileFormat.XML, null);
             t.storeToFile(out.toString(), FileFormat.TXT, null);
-            assertTrue(new String(Files.readAllBytes(out), Charset.defaultCharset()).startsWith("100: Hello\r\n"));
+            assertTrue(TestSupport.readUtf8(out).startsWith("100: Hello\r\n"));
         }
 
         @Test
-        @Disabled("Bug: exporting a TLK without entries as TXT creates no file at all")
         void zeroEntryFileGivesEmptyTextFile() throws Exception {
             TlkFile t = load(new TlkTestFile().treeNodeCount(0).dataLen(0));
             Path out = dir.resolve("empty.txt");
@@ -656,7 +679,6 @@ class TlkFileTest {
         }
 
         @Test
-        @Disabled("Bug: TXT export prints and swallows IOExceptions instead of reporting them")
         void unwritableTargetFails() throws IOException {
             TlkFile t = load(asciiFile());
             String target = dir.resolve("no-such-dir").resolve("out.txt").toString();
@@ -666,8 +688,9 @@ class TlkFileTest {
 
     @Test
     void storeWithoutLoadingFails() {
-        assertThrows(RuntimeException.class,
+        assertThrows(IllegalStateException.class,
                 () -> new TlkFile().storeToFile(dir.resolve("x.xml").toString(), FileFormat.XML, null));
+        assertFalse(Files.exists(dir.resolve("x.xml")));
     }
 
     @Test

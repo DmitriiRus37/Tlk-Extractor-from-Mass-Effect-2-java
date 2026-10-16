@@ -1,21 +1,12 @@
 package ru;
 
-import org.w3c.dom.Document;
-import org.xml.sax.InputSource;
-import org.xml.sax.SAXException;
-
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.stream.XMLOutputFactory;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamWriter;
-import javax.xml.transform.OutputKeys;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerException;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.dom.DOMSource;
-import javax.xml.transform.stream.StreamResult;
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.DataInputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -50,10 +41,48 @@ import java.util.function.DoubleConsumer;
  *       least significant bit of each byte (see {@link BitArray#getRev(int)}). The last byte is
  *       zero-padded.</li>
  * </ol>
- * A string ref's {@code bitOffset} is a bit index into that stream. Several refs may share an
- * offset, and an offset may point into the middle of another string to reuse its tail.
+ * A string ref's {@code bitOffset} is a bit index into that stream, or {@code -1} if the entry has
+ * no text. Several refs may share an offset, and an offset may point into the middle of another
+ * string to reuse its tail.
+ *
+ * <h2>XML format</h2>
+ * <pre>{@code
+ * <?xml version="1.0" encoding="UTF-8"?>
+ * <tlkFile TLKToolVersion="1.0.4">
+ *     <!--Male entries section begin (ends at position 103969)-->
+ *     <string>
+ *         <id>34931</id>
+ *         <position>0</position>
+ *         <data>text of the string</data>
+ *     </string>
+ *     ...
+ * </tlkFile>
+ * }</pre>
+ * One {@code <string>} per string ref, in file order; {@code <position>} is the ref's index in
+ * the file, which {@link HuffmanCompression} uses to restore the order. As in the C# original, an
+ * entry without text has the {@code <data>} {@code -1}. Carriage returns are written as
+ * {@code &#13;} so that XML parsers do not turn them into line feeds.
  */
-public class TlkFile  {
+public class TlkFile {
+
+    /** Value of the {@code TLKToolVersion} attribute written to XML files: the C# original's version. */
+    static final String TOOL_VERSION = "1.0.4";
+    /** Name of the XML root element. */
+    static final String XML_ROOT = "tlkFile";
+    /** Name of the root element's attribute holding the version of the tool that wrote the file. */
+    static final String XML_VERSION_ATTRIBUTE = "TLKToolVersion";
+    /** Name of the XML element of one string ref. */
+    static final String XML_STRING = "string";
+    /** Name of the XML element holding a string ref's id. */
+    static final String XML_ID = "id";
+    /** Name of the XML element holding a string ref's position in the file. */
+    static final String XML_POSITION = "position";
+    /** Name of the XML element holding a string ref's text. */
+    static final String XML_DATA = "data";
+    /** {@code <data>} content of an entry without text. */
+    static final String XML_NO_TEXT = "-1";
+    /** Indentation of one XML nesting level. */
+    private static final String INDENT = "    ";
 
     /** Header of the loaded file; {@code null} until {@link #loadTlkData(String)} succeeds. */
     private TlkHeader header;
@@ -260,174 +289,182 @@ public class TlkFile  {
     }
 
     /**
-     * Writes the loaded strings to a text file, deleting any existing file at that path first.
+     * Writes the loaded strings to a text file, replacing any existing file. The file is UTF-8
+     * encoded, whatever the platform's default charset.
      *
-     * <p>{@link FileFormat#XML} writes the {@code <tlkFile>} document (see
-     * {@link #saveToXmlFile(String, DoubleConsumer)}) and then re-indents it in place
-     * ({@link #prettyXmlFile(String)}); any other format writes the plain listing of
-     * {@link #saveToTextFile(String, DoubleConsumer)}. Entries keep their file order (male
-     * section, then female). The elapsed time in milliseconds is printed to standard output.
+     * <p>{@link FileFormat#XML} writes the {@code <tlkFile>} document described in the class
+     * description, indented with 4 spaces; {@link FileFormat#TXT} and (for now)
+     * {@link FileFormat#CSV} write one {@code "<stringId>: <text>"} line per entry, terminated by
+     * CRLF ({@code <text>} is {@code null} for entries without text). Entries keep their file order
+     * (male section, then female). If writing fails, the output file may be left incomplete.
      *
      * @param fileName path of the output file
-     * @param ff       output format
+     * @param format   output format
      * @param progress meant to receive the completed fraction (0 to 1), e.g. the GUI progress
      *                 bar; may be {@code null}. Currently never called. A plain
      *                 {@link DoubleConsumer} rather than the GUI controller, so that the
      *                 conversion classes compile without JavaFX
-     * @throws XMLStreamException if writing the XML fails
-     * @throws IOException        if the old file cannot be deleted or the new one cannot be
-     *                            written or re-read
-     * @throws RuntimeException   if re-indenting the XML fails; wraps the cause
+     * @throws IllegalStateException if no TLK file has been loaded
+     * @throws IOException           if the file cannot be written, or a string contains a
+     *                               character that XML 1.0 cannot represent (such as
+     *                               {@code U+0001}); the message names the entry
      */
-    public void storeToFile(String fileName, FileFormat ff, DoubleConsumer progress) throws XMLStreamException, IOException {
+    public void storeToFile(String fileName, FileFormat format, DoubleConsumer progress) throws IOException {
+        if (stringRefs == null) {
+            throw new IllegalStateException("No TLK file loaded; call loadTlkData first");
+        }
+        try (Writer out = Files.newBufferedWriter(Paths.get(fileName), StandardCharsets.UTF_8)) {
+            switch (format) {
+                case XML:
+                    writeXml(out);
+                    break;
+                case TXT:
+                case CSV:
+                    writeText(out);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported output format: " + format);
+            }
+        }
+    }
 
-        long start = System.nanoTime();
-        Files.deleteIfExists(Paths.get(fileName));
-        /** for now, it's better not to sort, to preserve original order */
-        // StringRefs.Sort(CompareTlkStringRef);
+    /**
+     * Writes all string refs as an indented XML document (see the class description). XML
+     * comments mark the beginning and end of the male and female sections; they are written even
+     * if a section is empty.
+     *
+     * @param out destination
+     * @throws IOException if writing fails or a string cannot be represented in XML
+     */
+    private void writeXml(Writer out) throws IOException {
+        int maleCount = header.entry1Count;
+        int lastPosition = header.entry1Count + header.entry2Count - 1;
+        out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        out.write("<" + XML_ROOT + " " + XML_VERSION_ATTRIBUTE + "=\"" + TOOL_VERSION + "\">\n");
+        writeComment(out, "Male entries section begin (ends at position " + (maleCount - 1) + ")");
+        int index = 0;
+        for (TlkStringRef ref : stringRefs) {
+            if (index++ == maleCount) {
+                writeSectionChange(out, lastPosition);
+            }
+            writeXmlEntry(out, ref);
+        }
+        if (index <= maleCount) {
+            writeSectionChange(out, lastPosition);
+        }
+        writeComment(out, "Female entries section end");
+        out.write("</" + XML_ROOT + ">\n");
+    }
 
-        if (ff.equals(FileFormat.XML)) {
-            saveToXmlFile(fileName, progress);
-            prettyXmlFile(fileName);
+    /**
+     * Writes the comments that close the male section and open the female one.
+     *
+     * @param out          destination
+     * @param lastPosition position of the last entry of the female section
+     * @throws IOException if writing fails
+     */
+    private static void writeSectionChange(Writer out, int lastPosition) throws IOException {
+        writeComment(out, "Male entries section end");
+        writeComment(out, "Female entries section begin (ends at position " + lastPosition + ")");
+    }
+
+    /**
+     * Writes an XML comment on its own line, indented by one level.
+     *
+     * @param out  destination
+     * @param text comment text; must not contain {@code "--"}
+     * @throws IOException if writing fails
+     */
+    private static void writeComment(Writer out, String text) throws IOException {
+        out.write(INDENT + "<!--" + text + "-->\n");
+    }
+
+    /**
+     * Writes one {@code <string>} element.
+     *
+     * @param out destination
+     * @param ref the entry
+     * @throws IOException if writing fails or the text cannot be represented in XML
+     */
+    private static void writeXmlEntry(Writer out, TlkStringRef ref) throws IOException {
+        out.write(INDENT + "<" + XML_STRING + ">\n");
+        out.write(INDENT + INDENT + "<" + XML_ID + ">" + ref.stringId + "</" + XML_ID + ">\n");
+        out.write(INDENT + INDENT + "<" + XML_POSITION + ">" + ref.position + "</" + XML_POSITION + ">\n");
+        out.write(INDENT + INDENT + "<" + XML_DATA + ">");
+        if (ref.data != null) {
+            writeEscaped(out, ref);
         } else {
-            saveToTextFile(fileName, progress);
+            out.write(XML_NO_TEXT);
         }
-
-        System.out.println("storeToFile: "+ (System.nanoTime() - start)/1_000_000);
+        out.write("</" + XML_DATA + ">\n");
+        out.write(INDENT + "</" + XML_STRING + ">\n");
     }
 
     /**
-     * Writes all string refs as an unindented XML document.
+     * Writes the text of an entry as XML character data: {@code &}, {@code <} and {@code >}
+     * become entity references, a carriage return becomes {@code &#13;}, everything else is
+     * written as is.
      *
-     * <p>The root is {@code <tlkFile TLKToolVersion="1.0.4">}; it holds one {@code <string>}
-     * per entry with the children {@code <id>} ({@link TlkStringRef#stringId}),
-     * {@code <position>} ({@link TlkStringRef#position}) and {@code <data>} (the text, or the
-     * literal {@code -1} if the entry's bit offset is negative). XML comments mark the beginning
-     * and end of the male and female sections. {@link HuffmanCompression} reads this format
-     * back and rejects a {@code TLKToolVersion} below 1.0.3.
-     *
-     * <p>Note: the declaration says UTF-8 while the {@link FileWriter} uses the platform default
-     * charset (UTF-8 on JDK 18 and later), and the {@code FileWriter} is never closed
-     * ({@link XMLStreamWriter#close()} does not close the underlying writer).
-     *
-     * @param fileName path of the output file
-     * @param progress meant for progress reporting (see {@link #storeToFile}); currently unused
-     * @throws XMLStreamException if the XML writer fails
-     * @throws IOException        if the file cannot be opened for writing
+     * @param out destination
+     * @param ref the entry whose {@link TlkStringRef#data} to write
+     * @throws IOException if writing fails or the text contains a character XML 1.0 does not
+     *                     allow (a control character other than tab, line feed and carriage
+     *                     return, an unpaired surrogate, {@code U+FFFE} or {@code U+FFFF})
      */
-    private void saveToXmlFile(String fileName, DoubleConsumer progress) throws XMLStreamException, IOException {
-        int totalCount = stringRefs.size();
-
-        // Creating FileWriter object
-        Writer fileWriter = new FileWriter(fileName);
-
-        // Getting the XMLOutputFactory instance
-        XMLOutputFactory xmlOutputFactory = XMLOutputFactory.newInstance();
-
-        // Creating XMLStreamWriter object from xmlOutputFactory.
-        XMLStreamWriter xr = xmlOutputFactory.createXMLStreamWriter(fileWriter);
-
-        xr.writeStartDocument("utf-8", "1.0");
-        xr.writeStartElement("tlkFile");
-        xr.writeAttribute("TLKToolVersion", "1.0.4");
-        xr.writeComment("Male entries section begin (ends at position " + (header.entry1Count - 1) + ")");
-
-        for (TlkStringRef s : stringRefs) {
-            if (s.position == header.entry1Count) {
-                xr.writeComment("Male entries section end");
-                xr.writeComment("Female entries section begin (ends at position " + (header.entry1Count + header.entry2Count - 1) + ")");
+    private static void writeEscaped(Writer out, TlkStringRef ref) throws IOException {
+        String text = ref.data;
+        int start = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            String replacement;
+            if (c == '&') {
+                replacement = "&amp;";
+            } else if (c == '<') {
+                replacement = "&lt;";
+            } else if (c == '>') {
+                replacement = "&gt;";
+            } else if (c == '\r') {
+                replacement = "&#13;";
+            } else if (Character.isHighSurrogate(c) && i + 1 < text.length()
+                    && Character.isLowSurrogate(text.charAt(i + 1))) {
+                i++;
+                continue;
+            } else if (isXmlChar(c)) {
+                continue;
+            } else {
+                throw new IOException("String " + ref.stringId + " (position " + ref.position
+                        + ") cannot be written as XML: it contains the character U+"
+                        + String.format("%04X", (int) c) + ", which XML 1.0 does not allow");
             }
-            xr.writeStartElement("string");
-
-            xr.writeStartElement("id");
-            xr.writeCharacters(String.valueOf(s.stringId));
-            xr.writeEndElement(); // </id>
-
-            xr.writeStartElement("position");
-            xr.writeCharacters(String.valueOf(s.position));
-            xr.writeEndElement(); // </position>
-
-            xr.writeStartElement("data");// </data>
-            xr.writeCharacters(s.bitOffset < 0 ? "-1" : s.data);
-            xr.writeEndElement(); // </data>
-
-            xr.writeEndElement(); // </string>
+            out.write(text, start, i - start);
+            out.write(replacement);
+            start = i + 1;
         }
-        xr.writeComment("Female entries section end");
-        xr.writeEndElement(); // </tlkFile>
-        xr.flush();
-        xr.close();
+        out.write(text, start, text.length() - start);
     }
 
     /**
-     * Re-indents an XML file in place, 4 spaces per level.
+     * Tells whether a UTF-16 unit may appear on its own in XML 1.0 character data.
      *
-     * <p>Reads the whole file into a string (re-joining its lines with the platform line
-     * separator), parses it into a DOM and serializes it back over the same file with
-     * indentation and without the XML declaration.
-     *
-     * <p>Note: reading and writing use the platform default charset, and the output
-     * {@link PrintWriter} is never closed.
-     *
-     * @param fileName path of the XML file to rewrite
-     * @throws IOException      if the file cannot be read
-     * @throws RuntimeException if parsing, transforming or opening the file for writing fails;
-     *                          the message contains the entire XML text
+     * @param c the character
+     * @return {@code true} for tab, line feed, carriage return and {@code U+0020} to
+     *         {@code U+FFFD} except surrogates
      */
-    private void prettyXmlFile(String fileName) throws IOException {
-        String xmlString;
-        try (BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
-            String line;
-            StringBuilder stringBuilder = new StringBuilder();
-            String ls = System.getProperty("line.separator");
-            while ((line = reader.readLine()) != null) {
-                stringBuilder.append(line);
-                stringBuilder.append(ls);
-            }
-            xmlString = stringBuilder.toString();
-        }
-
-        try {
-            InputSource src = new InputSource(new StringReader(xmlString));
-            Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(src);
-
-            TransformerFactory transformerFactory = TransformerFactory.newInstance();
-            transformerFactory.setAttribute("indent-number", 4);
-            Transformer transformer = transformerFactory.newTransformer();
-            transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
-            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
-            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-
-            PrintWriter writer = new PrintWriter(fileName);
-            transformer.transform(new DOMSource(document), new StreamResult(writer));
-
-        } catch (IOException | IllegalArgumentException |
-                 ParserConfigurationException | TransformerException | SAXException e) {
-            throw new RuntimeException("Error occurs when pretty-printing xml:\n" + xmlString, e);
-        }
+    private static boolean isXmlChar(char c) {
+        return c >= 0x20 ? !Character.isSurrogate(c) && c != 0xFFFE && c != 0xFFFF
+                : c == '\t' || c == '\n' || c == '\r';
     }
 
     /**
      * Writes all string refs as plain text: one {@code "<stringId>: <data>"} line per entry,
      * terminated by CRLF ({@code data} prints as {@code null} for entries without text).
      *
-     * <p>Currently not used by main application, but it works ok. Note: the file is opened in
-     * append mode once per line, and write errors are printed and otherwise ignored.
-     *
-     * @param fileName path of the output file; appended to
-     * @param progress meant for progress reporting (see {@link #storeToFile}); currently unused
+     * @param out destination
+     * @throws IOException if writing fails
      */
-    private void saveToTextFile(String fileName, DoubleConsumer progress) {
-        int totalCount = stringRefs.size();
-
-        for (TlkStringRef s : stringRefs) {
-            String line = s.stringId + ": " + s.data + "\r\n";
-
-            try (FileWriter fw = new FileWriter(fileName, true)) {
-                fw.write(line);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+    private void writeText(Writer out) throws IOException {
+        for (TlkStringRef ref : stringRefs) {
+            out.write(ref.stringId + ": " + ref.data + "\r\n");
         }
     }
 

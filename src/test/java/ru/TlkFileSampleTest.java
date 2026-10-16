@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -196,21 +196,16 @@ class TlkFileSampleTest {
     }
 
     @Test
-    void textExportOfTheFirstEntries(@TempDir Path dir) throws Exception {
-        // exporting all 105,124 entries as text takes ~20 s (the file is reopened per line), so
-        // export a copy that holds only the first 400 refs
-        List<TlkFile.TlkStringRef> firstRefs = SampleFixture.refs().subList(0, 400);
-        TlkFile part = withRefs(TlkFileTest.header(SampleFixture.tlk()), firstRefs);
-
-        Path out = dir.resolve("part.txt");
-        part.storeToFile(out.toString(), FileFormat.TXT, null);
+    void textExport(@TempDir Path dir) throws Exception {
+        Path out = dir.resolve("sample.txt");
+        SampleFixture.tlk().storeToFile(out.toString(), FileFormat.TXT, null);
 
         StringBuilder expected = new StringBuilder();
-        for (TlkFile.TlkStringRef r : firstRefs) {
+        for (TlkFile.TlkStringRef r : SampleFixture.refs()) {
             expected.append(r.stringId).append(": ").append(r.data).append("\r\n");
         }
         assertTrue(expected.indexOf("-2147319074: null\r\n") >= 0);
-        assertArrayEquals(expected.toString().getBytes(Charset.defaultCharset()), Files.readAllBytes(out));
+        assertArrayEquals(expected.toString().getBytes(StandardCharsets.UTF_8), Files.readAllBytes(out));
     }
 
     @Test

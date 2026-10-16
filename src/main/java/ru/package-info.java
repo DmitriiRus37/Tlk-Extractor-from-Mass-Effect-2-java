@@ -16,8 +16,8 @@
  *   <li>{@link ru.TlkFile#loadTlkData(String)} reads the header, string refs, tree and data
  *       block and decodes the text of every string ref by walking the tree bit by bit.</li>
  *   <li>{@link ru.TlkFile#storeToFile(String, ru.FileFormat, java.util.function.DoubleConsumer)}
- *       writes one {@code <string>} element per string ref, in file order, and re-indents the
- *       result:
+ *       writes one {@code <string>} element per string ref, in file order, as indented UTF-8
+ *       XML:
  *       <pre>{@code
  * <tlkFile TLKToolVersion="1.0.4">
  *     <!--Male entries section begin (ends at position 103969)-->

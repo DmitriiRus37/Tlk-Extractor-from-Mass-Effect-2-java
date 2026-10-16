@@ -174,9 +174,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- The production code uses the platform default charset (a known bug); pin it so the
-                         tests behave the same on every JDK and locale (UTF-8 is the default from JDK 18). -->
-                    <argLine>@{argLine} -Dfile.encoding=UTF-8</argLine>
+                    <!-- no file.encoding pin: the code and the tests use explicit charsets, and
+                         TlkFileTest checks the export under a non-UTF-8 default charset -->
+                    <argLine>@{argLine}</argLine>
                 </configuration>
             </plugin>
 
