@@ -8,10 +8,8 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <!-- The bytecode/API level is Java 8 on every JDK: "release" 8 on JDK 9+ and source/target
-             1.8 on JDK 8, whose javac has no release option (see the release-8 profile). -->
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
+        <!-- Java 21 is the oldest supported JDK: bytecode and API level 21 on every JDK -->
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
@@ -19,11 +17,11 @@
 
         <!-- dependencies -->
         <lombok.version>1.18.48</lombok.version>
-        <!-- OpenJFX for JDK 25+; older JDKs get an older line from the openjfx-* profiles below -->
+        <!-- OpenJFX for JDK 25+; JDK 21 to 24 get an older line from the openjfx-* profiles below -->
         <javafx.version>27</javafx.version>
         <commons-io.version>2.22.0</commons-io.version>
 
-        <!-- test dependencies (JUnit 5.x, not 6.x: JUnit 6 requires Java 17) -->
+        <!-- test dependencies -->
         <junit-jupiter.version>5.14.4</junit-jupiter.version>
 
         <!-- plugins -->
@@ -37,7 +35,6 @@
         <maven-site-plugin.version>3.22.0</maven-site-plugin.version>
         <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
         <javafx-maven-plugin.version>0.0.8</javafx-maven-plugin.version>
-        <exec-maven-plugin.version>3.6.4</exec-maven-plugin.version>
         <versions-maven-plugin.version>2.22.0</versions-maven-plugin.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
 
@@ -72,6 +69,23 @@
             <groupId>commons-io</groupId>
             <artifactId>commons-io</artifactId>
             <version>${commons-io.version}</version>
+        </dependency>
+
+        <!-- JavaFX modules used directly by the code / app.fxml -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>${javafx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+            <version>${javafx.version}</version>
         </dependency>
 
         <dependency>
@@ -130,15 +144,6 @@
                     <version>${jacoco-maven-plugin.version}</version>
                 </plugin>
                 <plugin>
-                    <!-- "mvn compile exec:java" runs the GUI on a JDK 8 that bundles JavaFX -->
-                    <groupId>org.codehaus.mojo</groupId>
-                    <artifactId>exec-maven-plugin</artifactId>
-                    <version>${exec-maven-plugin.version}</version>
-                    <configuration>
-                        <mainClass>${main.class}</mainClass>
-                    </configuration>
-                </plugin>
-                <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>${maven-javadoc-plugin.version}</version>
@@ -155,10 +160,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <compilerArgs>
-                        <!-- JDK 21+ warns that release/source 8 is obsolete; it is still supported -->
-                        <arg>-Xlint:-options</arg>
-                    </compilerArgs>
                     <!-- JDK 23+ no longer runs annotation processors found on the classpath implicitly -->
                     <annotationProcessorPaths>
                         <path>
@@ -245,6 +246,16 @@
                 </executions>
             </plugin>
 
+            <!-- "mvn javafx:run" launches the GUI with JavaFX on the module path -->
+            <plugin>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-maven-plugin</artifactId>
+                <version>${javafx-maven-plugin.version}</version>
+                <configuration>
+                    <mainClass>${main.class}</mainClass>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>versions-maven-plugin</artifactId>
@@ -265,159 +276,21 @@
     </build>
 
     <!--
-      Java 8 to 25 from one pom: the profiles below are activated by the JDK that runs Maven.
+      Java 21+ from one pom: the profiles below are activated by the JDK that runs Maven and pick
+      the newest OpenJFX release that JDK can run (each line needs a minimum JDK, the class file
+      version of its jars).
 
-      | JDK running Maven | bytecode          | JavaFX for the GUI                                  |
-      |===================|===================|=====================================================|
-      | 8                 | source/target 1.8 | the JDK's own jre/lib/ext/jfxrt.jar (Zulu FX,       |
-      |                   |                   | Liberica Full, Oracle 8); without one the GUI       |
-      |                   |                   | classes and tests are left out (no-javafx)          |
-      | 9, 10             | release 8         | none, GUI left out (no-javafx)                      |
-      | [11,17)           | release 8         | OpenJFX 17.0.x (its class files need Java 11)       |
-      | [17,23)           | release 8         | OpenJFX 21.0.x (needs Java 17)                      |
-      | [23,25)           | release 8         | OpenJFX 25.0.x (needs Java 23)                      |
-      | 25+               | release 8         | OpenJFX 27 (needs Java 25)                          |
-
-      OpenJFX is only published to Maven Central for JDK 11+, and every line needs a minimum JDK
-      (the class file version of its jars). Each JDK range gets the latest release of the newest
-      long-term-support line (17, 21, 25) it can run; JDK 25+ gets the current release.
+      | JDK running Maven | JavaFX for the GUI         |
+      |===================|============================|
+      | 21, 22            | OpenJFX 21.0.x             |
+      | 23, 24            | OpenJFX 25.0.x (needs 23)  |
+      | 25+               | OpenJFX 27 (needs 25)      |
     -->
     <profiles>
-        <!-- JDK 9+: compile for Java 8, API checked against the Java 8 class library -->
-        <profile>
-            <id>release-8</id>
-            <activation>
-                <jdk>[9,)</jdk>
-            </activation>
-            <properties>
-                <maven.compiler.release>8</maven.compiler.release>
-            </properties>
-        </profile>
-
-        <!--
-          JDK 8 (also 9 and 10) without a bundled JavaFX, e.g. Amazon Corretto 8 or Temurin 8:
-          OpenJFX from Maven Central needs Java 11+, so the JavaFX GUI (App, FxmlController) and
-          its tests are not built; the TLK conversion classes and their tests are. On JDK 8 the
-          bundled JavaFX is jre/lib/ext/jfxrt.jar (java.home is the jre directory), which javac
-          and the test JVM pick up from the extension directory without any configuration.
-        -->
-        <profile>
-            <id>no-javafx</id>
-            <activation>
-                <jdk>[1.8,11)</jdk>
-                <file>
-                    <missing>${java.home}/lib/ext/jfxrt.jar</missing>
-                </file>
-            </activation>
-            <properties>
-                <javadoc.no-javafx.sources>${project.build.directory}/javadoc-sources</javadoc.no-javafx.sources>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-compiler-plugin</artifactId>
-                        <configuration>
-                            <excludes>
-                                <exclude>ru/App.java</exclude>
-                                <exclude>ru/FxmlController.java</exclude>
-                            </excludes>
-                            <testExcludes>
-                                <testExclude>ru/AppTest.java</testExclude>
-                                <testExclude>ru/FxmlControllerTest.java</testExclude>
-                                <testExclude>ru/JavaFxToolkit.java</testExclude>
-                            </testExcludes>
-                        </configuration>
-                    </plugin>
-                    <!-- JDK 8's javadoc parses every source file of a package it finds on the source
-                         path, so excluding the GUI files is not enough: document a copy without them -->
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-resources-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>javadoc-sources-without-javafx</id>
-                                <phase>generate-sources</phase>
-                                <goals>
-                                    <goal>copy-resources</goal>
-                                </goals>
-                                <configuration>
-                                    <outputDirectory>${javadoc.no-javafx.sources}</outputDirectory>
-                                    <resources>
-                                        <resource>
-                                            <directory>${project.build.sourceDirectory}</directory>
-                                            <excludes>
-                                                <exclude>ru/App.java</exclude>
-                                                <exclude>ru/FxmlController.java</exclude>
-                                            </excludes>
-                                        </resource>
-                                    </resources>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-javadoc-plugin</artifactId>
-                        <configuration>
-                            <sourcepath>${javadoc.no-javafx.sources}</sourcepath>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <!-- JDK 11+: JavaFX from Maven Central, in the version chosen by the openjfx-* profiles -->
-        <profile>
-            <id>openjfx</id>
-            <activation>
-                <jdk>[11,)</jdk>
-            </activation>
-            <dependencies>
-                <!-- JavaFX modules used directly by the code / app.fxml -->
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-graphics</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-controls</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-                <dependency>
-                    <groupId>org.openjfx</groupId>
-                    <artifactId>javafx-fxml</artifactId>
-                    <version>${javafx.version}</version>
-                </dependency>
-            </dependencies>
-            <build>
-                <plugins>
-                    <!-- "mvn javafx:run" launches the GUI with JavaFX on the module path -->
-                    <plugin>
-                        <groupId>org.openjfx</groupId>
-                        <artifactId>javafx-maven-plugin</artifactId>
-                        <version>${javafx-maven-plugin.version}</version>
-                        <configuration>
-                            <mainClass>${main.class}</mainClass>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>openjfx-17</id>
-            <activation>
-                <jdk>[11,17)</jdk>
-            </activation>
-            <properties>
-                <javafx.version>17.0.20</javafx.version>
-            </properties>
-        </profile>
         <profile>
             <id>openjfx-21</id>
             <activation>
-                <jdk>[17,23)</jdk>
+                <jdk>[21,23)</jdk>
             </activation>
             <properties>
                 <javafx.version>21.0.12</javafx.version>
@@ -434,8 +307,7 @@
         </profile>
         <!-- JDK 25+ uses the default javafx.version (27) -->
 
-        <!-- JDK 24+ (JEP 472) warns when javafx.graphics loads its native libraries otherwise;
-             older JDKs (11 to 16) do not even know the option -->
+        <!-- JDK 24+ (JEP 472) warns when javafx.graphics loads its native libraries otherwise -->
         <profile>
             <id>javafx-native-access</id>
             <activation>

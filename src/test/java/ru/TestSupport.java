@@ -21,8 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * Small helpers shared by the tests: reflective access to private state of the classes under
  * test (so production code does not have to be opened up for testing), file reading and the
  * location of the bundled sample file.
- *
- * <p>Only Java 8 APIs are used, since the test suite must also build on JDK 1.8.
  */
 final class TestSupport {
 

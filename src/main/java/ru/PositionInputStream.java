@@ -134,9 +134,10 @@ public final class PositionInputStream extends FilterInputStream {
      * Skips exactly {@code n} bytes, advancing the position by {@code n}, or throws if the stream
      * ends first. Does nothing if {@code n} is zero or negative.
      *
-     * <p>Behaves like {@code InputStream.skipNBytes(long)} of Java 12 and later (which it overrides
-     * there) and is also available on Java 8 to 11. Bytes that {@link #skip(long)} does not skip
-     * are read instead, so it works on streams that cannot skip ahead.
+     * <p>Overrides {@link java.io.InputStream#skipNBytes(long)}, which behaves the same but throws
+     * an {@link EOFException} without message; this one names the position. Bytes that
+     * {@link #skip(long)} does not skip are read instead, so it works on streams that cannot skip
+     * ahead.
      *
      * @param n number of bytes to skip
      * @throws EOFException if the stream ends before {@code n} bytes were skipped; the position
