@@ -1,14 +1,15 @@
 package ru;
 
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -68,8 +69,15 @@ class HuffmanCompressionSampleTest {
         assertEquals(1.0, HuffmanAccess.kraftSum(codes), 1e-12);
         Map<Character, Integer> freq = HuffmanAccess.frequencies(hc);
         assertEquals(HuffmanAccess.optimalBits(freq), HuffmanAccess.encodedBits(freq, codes));
-        // one terminator per string with text
-        assertEquals(Integer.valueOf(SampleFixture.REF_COUNT - SampleFixture.REFS_WITHOUT_TEXT), freq.get('\0'));
+        // one terminator per distinct text
+        Set<String> distinct = new HashSet<>();
+        for (TlkFile.TlkStringRef r : SampleFixture.refs()) {
+            if (r.data != null) {
+                distinct.add(r.data);
+            }
+        }
+        assertEquals(Integer.valueOf(distinct.size()), freq.get('\0'));
+        assertTrue(distinct.size() < SampleFixture.REF_COUNT - SampleFixture.REFS_WITHOUT_TEXT);
     }
 
     @Test
@@ -105,18 +113,18 @@ class HuffmanCompressionSampleTest {
     @Test
     void saveToTlkFileWritesTheEncodedData(@TempDir Path dir) throws Exception {
         Path out = dir.resolve("saved.tlk");
-        hc.saveToTlkFile(out.toString(), true);
+        hc.saveToTlkFile(out.toString(), null);
         byte[] written = Files.readAllBytes(out);
         byte[] data = HuffmanAccess.expectedDataBlock(hc);
         assertArrayEquals(data, Arrays.copyOfRange(written, written.length - data.length, written.length));
     }
 
     @Test
-    @Disabled("Known bug: saveToTlkFile writes only the low byte of every int and keeps entries in "
-            + "HashMaps (order lost), so TLK -> XML -> TLK does not reproduce the strings")
     void tlkToXmlToTlkRoundTrip(@TempDir Path dir) throws Exception {
         Path out = dir.resolve("saved.tlk");
-        hc.saveToTlkFile(out.toString(), true);
+        hc.saveToTlkFile(out.toString(), null);
+        assertTrue(Files.size(out) < Files.size(TestSupport.samplePath()) * 11 / 10,
+                "re-encoded file is much larger than the original: " + Files.size(out));
         TlkFile t = new TlkFile();
         t.loadTlkData(out.toString());
         TlkFile.TlkHeader h = TlkFileTest.header(t);
@@ -127,6 +135,11 @@ class HuffmanCompressionSampleTest {
         assertEquals(SampleFixture.FEMALE_COUNT, h.entry2Count);
         assertEquals(SampleFixture.TREE_NODE_COUNT, h.treeNodeCount);
         assertSameStrings(SampleFixture.refs(), TlkFileTest.refs(t));
+
+        // ... -> XML again: the same document as the first export
+        Path xml = dir.resolve("again.xml");
+        t.storeToFile(xml.toString(), FileFormat.XML, null);
+        assertArrayEquals(Files.readAllBytes(SampleFixture.xml()), Files.readAllBytes(xml));
     }
 
     private static void assertSameStrings(List<TlkFile.TlkStringRef> expected, List<TlkFile.TlkStringRef> actual) {

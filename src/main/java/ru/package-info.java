@@ -40,9 +40,10 @@
  *       {@code <position>} and builds a new Huffman tree and code table from the character
  *       frequencies of the texts. With the debug flag, which the GUI always sets, each
  *       localizable string is prefixed with {@code "(#<id>) "}.</li>
- *   <li>{@link ru.HuffmanCompression#saveToTlkFile(String, boolean)} encodes the strings into one
- *       bit stream and writes header, string refs, tree and data. This step is known to be
- *       incomplete: see the notes on that method.</li>
+ *   <li>{@link ru.HuffmanCompression#saveToTlkFile(String, java.util.function.DoubleConsumer)}
+ *       encodes every distinct text once into one bit stream and writes header, string refs,
+ *       tree and data. Loading the result with {@link ru.TlkFile} gives back the same ids and
+ *       texts in the same order.</li>
  * </ol>
  *
  * <h2>Classes</h2>

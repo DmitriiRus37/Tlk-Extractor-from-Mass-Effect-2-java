@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
@@ -19,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -146,6 +148,16 @@ class TlkFileTest {
             assertThrows(EOFException.class, () -> TlkFile.readInt32(in(new byte[0])));
             assertThrows(EOFException.class, () -> TlkFile.readInt32(in(new byte[3])));
         }
+
+        @Test
+        void writeInt32IsLittleEndianAndInverseOfReadInt32() throws IOException {
+            for (int v : new int[]{0, 1, -1, 0x01020304, Integer.MIN_VALUE, Integer.MAX_VALUE, 0xff, SampleFixture.MAGIC}) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                TlkFile.writeInt32(out, v);
+                assertArrayEquals(TlkTestFile.intsLE(v), out.toByteArray());
+                assertEquals(v, TlkFile.readInt32(in(out.toByteArray())));
+            }
+        }
     }
 
     @Nested
@@ -184,6 +196,33 @@ class TlkFileTest {
             assertEquals(3, n.leftNodeId);
             assertEquals(-33, n.rightNodeId);
             assertThrows(EOFException.class, () -> new TlkFile.HuffmanNode(in(new byte[7])));
+        }
+
+        @Test
+        void recordsWriteWhatTheyRead() throws IOException {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            new TlkFile.TlkHeader(4, 5, 6, 7).write(out);
+            new TlkFile.TlkStringRef(-2147319074, -1).write(out);
+            new TlkFile.HuffmanNode(3, -33).write(out);
+            assertArrayEquals(TlkTestFile.intsLE(TlkTestFile.MAGIC, 3, 2, 4, 5, 6, 7, -2147319074, -1, 3, -33),
+                    out.toByteArray());
+
+            InputStream back = in(out.toByteArray());
+            TlkFile.TlkHeader h = new TlkFile.TlkHeader(back);
+            assertEquals(TlkFile.TlkHeader.MAGIC, h.magic);
+            assertEquals(TlkFile.TlkHeader.VERSION, h.ver);
+            assertEquals(TlkFile.TlkHeader.MIN_VERSION, h.minVer);
+            assertEquals(7, h.dataLen);
+            assertEquals(-2147319074, new TlkFile.TlkStringRef(back).stringId);
+            assertEquals(-33, new TlkFile.HuffmanNode(back).rightNodeId);
+        }
+
+        @Test
+        void expectedFileSizeAddsUpAllParts() {
+            assertEquals(28 + 8 * 9 + 8 * 6 + 7, new TlkFile.TlkHeader(4, 5, 6, 7).expectedFileSize());
+            assertEquals(28 + 8L * Integer.MAX_VALUE * 3 + Integer.MAX_VALUE,
+                    new TlkFile.TlkHeader(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE)
+                            .expectedFileSize());
         }
 
         @Test
@@ -541,6 +580,25 @@ class TlkFileTest {
         }
 
         @Test
+        void hasTextAttributeOnlyWhereTheIdSignIsMisleading() throws Exception {
+            Path out = dir.resolve("signs.xml");
+            load(new TlkTestFile().male(1, "a").maleRaw(2, -1).male(-3, "b").maleRaw(-4, -1))
+                    .storeToFile(out.toString(), FileFormat.XML, null);
+            String content = TestSupport.readUtf8(out);
+            assertTrue(content.contains("<id>1</id>\n        <position>0</position>\n        <data>a</data>"), content);
+            assertTrue(content.contains("<data hasText=\"false\">-1</data>"), content);
+            assertTrue(content.contains("<data hasText=\"true\">b</data>"), content);
+            assertTrue(content.contains("<id>-4</id>\n        <position>3</position>\n        <data>-1</data>"), content);
+        }
+
+        @Test
+        void reportsProgressUpToOne() throws Exception {
+            List<Double> reported = new ArrayList<>();
+            load(typicalFile()).storeToFile(dir.resolve("progress.xml").toString(), FileFormat.XML, reported::add);
+            assertEquals(Arrays.asList(0.2, 0.4, 0.6, 0.8, 1.0), reported);
+        }
+
+        @Test
         void replacesAnExistingFile() throws Exception {
             Path out = dir.resolve("existing.xml");
             TestSupport.writeUtf8(out, "<garbage>this is not a tlk export");
@@ -651,6 +709,13 @@ class TlkFileTest {
         void unicodeTextIsUtf8() throws Exception {
             assertEquals("1: " + CYRILLIC + " " + EMOJI + "\r\n",
                     export(load(new TlkTestFile().male(1, CYRILLIC + " " + EMOJI)), FileFormat.TXT, "u.txt"));
+        }
+
+        @Test
+        void reportsProgress() throws Exception {
+            List<Double> reported = new ArrayList<>();
+            load(asciiFile()).storeToFile(dir.resolve("progress.txt").toString(), FileFormat.TXT, reported::add);
+            assertEquals(Arrays.asList(0.25, 0.5, 0.75, 1.0), reported);
         }
 
         @Test

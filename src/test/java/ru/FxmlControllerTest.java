@@ -113,7 +113,7 @@ class FxmlControllerTest {
         invoke("startExportTlkToXml");
 
         assertEquals("DONE", controller.getStatusTlkToXml().getText());
-        assertEquals(0.0, controller.getProgressBarTlkToXml().getProgress(), 0.0);
+        assertEquals(1.0, controller.getProgressBarTlkToXml().getProgress(), 0.0);
         ExportedXml parsed = ExportedXml.parse(xml);
         assertEquals(3, parsed.strings.size());
         assertEquals("Привет", parsed.strings.get(0).data);
@@ -147,7 +147,7 @@ class FxmlControllerTest {
         invoke("startExportXmlToTlk");
 
         assertEquals("DONE", controller.getStatusXmlToTlk().getText());
-        assertEquals(0.0, controller.getProgressBarXmlToTlk().getProgress(), 0.0);
+        assertEquals(1.0, controller.getProgressBarXmlToTlk().getProgress(), 0.0);
         // the GUI always converts with the debug prefix: the data block must match a debug load
         HuffmanCompression debug = new HuffmanCompression();
         debug.loadInputData(xml.toString(), FileFormat.XML, true);

@@ -19,8 +19,8 @@ import java.io.IOException;
  * <p>Each tab has an input path, an output path (filled in from the input path with the other
  * extension until the user picks an output file explicitly), a START button, a progress bar and
  * a status field. Conversions run synchronously on the JavaFX application thread, so the window
- * freezes while one runs and the intermediate "in progress" status is never actually shown; the
- * progress bars are only ever reset to 0. Exceptions from a conversion go to the thread's
+ * freezes while one runs: the intermediate "in progress" status is never actually shown, and the
+ * progress bars only show the final state. Exceptions from a conversion go to the thread's
  * uncaught-exception handler and are not reported in the UI.
  *
  * <p>Lombok generates getters and setters for all fields; {@link App} uses {@code setApp}.
@@ -62,8 +62,7 @@ public class FxmlController {
     private TextField textFieldStatusTlkToXml;
     /**
      * Progress bar of the "Create XML" tab; reset to 0 on START and passed to
-     * {@link TlkFile#storeToFile} as its progress callback, which is never called, so the bar
-     * never advances.
+     * {@link TlkFile#storeToFile} as its progress callback.
      */
     @FXML
     public ProgressBar progressBarTlkToXml;
@@ -161,7 +160,10 @@ public class FxmlController {
     /** Read-only status field of the "Create Tlk" tab ("in progress", then "DONE"). */
     @FXML
     private TextField statusXmlToTlk;
-    /** Progress bar of the "Create Tlk" tab; reset to 0 on START, never advanced. */
+    /**
+     * Progress bar of the "Create Tlk" tab; reset to 0 on START and passed to
+     * {@link HuffmanCompression#saveToTlkFile} as its progress callback.
+     */
     @FXML
     public ProgressBar progressBarXmlToTlk;
     /**
@@ -223,7 +225,7 @@ public class FxmlController {
         progressBarXmlToTlk.setProgress(0.0);
         HuffmanCompression hc = new HuffmanCompression();
         hc.loadInputData(textFieldInputPathXmlToTlk.getText(), FileFormat.XML, true);
-        hc.saveToTlkFile(textFieldIOutputPathXmlToTlk.getText(), true);
+        hc.saveToTlkFile(textFieldIOutputPathXmlToTlk.getText(), progressBarXmlToTlk::setProgress);
         statusXmlToTlk.setText("DONE");
     }
 

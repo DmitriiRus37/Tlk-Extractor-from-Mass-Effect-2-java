@@ -5,14 +5,27 @@ import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.BufferedInputStream;
-import java.io.FileOutputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Set;
+import java.util.function.DoubleConsumer;
 
 /**
  * Builds a Mass Effect 2 {@code .tlk} file from the XML written by {@link TlkFile}: the
@@ -20,12 +33,15 @@ import java.util.*;
  *
  * <p>Usage: {@link #loadInputData(String, FileFormat, boolean)} parses the XML, sorts the entries
  * by their original position and builds a Huffman code from the character frequencies of all
- * strings; {@link #saveToTlkFile(String, boolean)} then encodes every string and writes header,
- * string refs, tree and data in the layout described in {@link TlkFile}. An instance can be
- * reused: every load replaces the previous data.
+ * strings; {@link #saveToTlkFile(String, DoubleConsumer)} then encodes the strings and writes
+ * header, string refs, tree and data in the layout described in {@link TlkFile}. An instance can
+ * be reused: every load replaces the previous data.
  *
- * <p>Note: the writer does not yet produce a valid TLK file; see the notes on
- * {@link #saveToTlkFile(String, boolean)}.
+ * <p>Differences from the C# original, which this class otherwise follows: identical strings are
+ * stored once and share their bit offset (the game's files do the same; shared tails are not
+ * looked for), the Huffman tree is built deterministically (ties are broken by first occurrence),
+ * an XML file without text gives a TLK file without tree instead of an error, and files from tool
+ * versions before 1.0.3 are rejected instead of only causing a warning.
  */
 class HuffmanCompression {
 
@@ -50,8 +66,8 @@ class HuffmanCompression {
     /** Entries read from the XML, sorted by position after loading. */
     private final List<TlkEntry> inputData = new ArrayList<>();
     /**
-     * Number of occurrences of each character, terminators included, over all entries with text,
-     * in order of first occurrence; the weights of the Huffman tree.
+     * Number of occurrences of each character, terminators included, over all distinct texts, in
+     * order of first occurrence; the weights of the Huffman tree.
      */
     private final Map<Character, Integer> frequencyCount = new LinkedHashMap<>();
     /** Root of the Huffman tree; {@code null} if no entry has text. */
@@ -64,7 +80,7 @@ class HuffmanCompression {
 
     /**
      * Creates an empty compressor; call {@link #loadInputData(String, FileFormat, boolean)}
-     * before {@link #saveToTlkFile(String, boolean)}.
+     * before {@link #saveToTlkFile(String, DoubleConsumer)}.
      */
     HuffmanCompression() {
     }
@@ -158,28 +174,92 @@ class HuffmanCompression {
     }
 
     /**
-     * Loads an XML file written by {@link TlkFile} and prepares the Huffman coding for it,
-     * replacing anything loaded before. If loading fails, the instance is left empty.
+     * Appends bit sequences to a growing byte array, least significant bit first: bit {@code k}
+     * of the stream becomes bit {@code k % 8} (value {@code 1 << (k % 8)}) of byte {@code k / 8},
+     * the order in which {@link TlkFile} reads the data block with {@link BitArray#getRev(int)}.
+     */
+    static final class BitWriter {
+        /** Packed bits; grows as needed. */
+        private byte[] bytes = new byte[1024];
+        /** Number of bits written so far. */
+        private int bitCount;
+
+        /** Creates an empty writer. */
+        BitWriter() {
+        }
+
+        /**
+         * Appends the bits of a code, {@code code.get(0)} first.
+         *
+         * @param code the bits to append; may be empty
+         * @throws IllegalStateException if the stream would exceed {@link Integer#MAX_VALUE}
+         *                               bits, the largest bit offset a TLK file can hold
+         */
+        void append(BitArray code) {
+            int length = code.length();
+            if (bitCount > Integer.MAX_VALUE - length) {
+                throw new IllegalStateException("The TLK data block would exceed " + Integer.MAX_VALUE + " bits");
+            }
+            int neededBytes = (int) (((long) bitCount + length + 7) / 8);
+            if (neededBytes > bytes.length) {
+                bytes = Arrays.copyOf(bytes, Math.max(neededBytes, 2 * bytes.length));
+            }
+            for (int i = 0; i < length; i++, bitCount++) {
+                if (code.get(i)) {
+                    bytes[bitCount >>> 3] |= (byte) (1 << (bitCount & 7));
+                }
+            }
+        }
+
+        /**
+         * Returns the number of bits written, which is also the bit offset of the next append.
+         *
+         * @return the bit count
+         */
+        int bitCount() {
+            return bitCount;
+        }
+
+        /**
+         * Returns the written bits; the last byte is zero-padded.
+         *
+         * @return {@code ceil(bitCount() / 8)} bytes
+         */
+        byte[] toByteArray() {
+            return Arrays.copyOf(bytes, (int) (((long) bitCount + 7) / 8));
+        }
+    }
+
+    /**
+     * Loads a file written by {@link TlkFile} and prepares the Huffman coding for it, replacing
+     * anything loaded before. If loading fails, the instance is left empty.
      *
      * <p>Reads every {@code <string>} element (see {@link #readXml(Path, boolean)}), sorts the
-     * entries by position and builds the Huffman tree and codes ({@link #prepareHuffmanCoding()}).
+     * entries by position, checks that no id occurs more than twice (a TLK file has room for a
+     * male and a female variant of a string, nothing more) and builds the Huffman tree and codes
+     * ({@link #prepareHuffmanCoding()}).
      *
-     * @param fileName     path of the XML file
-     * @param ff           input format; currently ignored, the file is always parsed as XML
+     * @param fileName     path of the file
+     * @param format       input format; only {@link FileFormat#XML} is supported
      * @param debugVersion if {@code true}, every localizable string is prefixed with
      *                     {@code "(#<id>) "} so that its id is visible in game
-     * @throws IOException if the file cannot be read, is not well-formed XML, is not a
-     *                     {@code <tlkFile>} document, was written by a tool version older than
-     *                     {@value #MIN_TOOL_VERSION} (a missing version counts as
-     *                     {@value #DEFAULT_TOOL_VERSION}) or has an invalid {@code <id>},
-     *                     {@code <position>} or no-text {@code <data>}; the message names the
-     *                     file and the problem
+     * @throws IllegalArgumentException if {@code format} is not {@link FileFormat#XML}
+     * @throws IOException              if the file cannot be read, is not well-formed XML, is not a
+     *                                  {@code <tlkFile>} document, was written by a tool version
+     *                                  older than {@value #MIN_TOOL_VERSION}, has an invalid
+     *                                  {@code <id>}, {@code <position>} or no-text
+     *                                  {@code <data>}, or has an id more than twice; the message
+     *                                  names the file and the problem
      */
-    public void loadInputData(String fileName, FileFormat ff, boolean debugVersion) throws IOException {
+    public void loadInputData(String fileName, FileFormat format, boolean debugVersion) throws IOException {
         reset();
         try {
+            if (format != FileFormat.XML) {
+                throw new IllegalArgumentException("Only XML input is supported, not " + format);
+            }
             readXml(Paths.get(fileName), debugVersion);
             inputData.sort(Comparator.comparingInt(e -> e.position));
+            checkIdOccurrences(fileName);
             prepareHuffmanCoding();
         } catch (IOException | RuntimeException e) {
             reset();
@@ -198,115 +278,76 @@ class HuffmanCompression {
 
     /**
      * Encodes the loaded entries and writes them as a TLK file, replacing any existing file.
-     * The data must have been loaded with {@link #loadInputData(String, FileFormat, boolean)}.
+     * The data must have been loaded with {@link #loadInputData(String, FileFormat, boolean)};
+     * without it, a TLK file without entries is written.
      *
      * <p>Entries are processed in position order. The first entry for a string id goes to the
-     * first (male) section, a later one with the same id to the second (female) section. For an
-     * entry with text, the Huffman codes of its characters and of a {@code '\0'} terminator are
-     * appended to the bit stream and the entry stores the bit offset where they start (every
-     * string is encoded separately; identical strings and shared tails are not merged as in the
-     * game's files). Entries without text get the bit offset {@code -1} and nothing is encoded.
-     * The header holds magic {@code 7040084}, version 3, minimum version
-     * 2, both section sizes, the number of inner tree nodes and the data length in bytes, followed
-     * by the sections, the tree ({@link #treeToBuffer()}) and the packed bits
-     * ({@link #bitArrayListToByteArray(List, int)}).
-     *
-     * <p>Note: integers are written with {@link OutputStream#write(int)}, which writes only the
-     * low byte of each value instead of four little-endian bytes, and the two sections are kept in
-     * {@link HashMap}s, so entries come out in hash order rather than position order. The output
-     * stream is not closed if writing fails.
+     * first (male) section, the second one to the second (female) section; each section keeps the
+     * position order. Each distinct text is Huffman-coded once, with a {@code '\0'} terminator,
+     * and every entry with that text gets the bit offset where it starts; entries without text
+     * get the offset {@code -1}. The header holds magic {@code 7040084}, version 3, minimum
+     * version 2, both section sizes, the number of tree nodes ({@link #treeToBuffer()}) and the
+     * data length in bytes; all integers are little-endian.
      *
      * @param fileName path of the TLK file to write
-     * @param isPC     meant to choose little-endian (PC) or big-endian (Xbox 360) output, as in
-     *                 the C# original; currently ignored
-     * @throws IOException if the old file cannot be deleted or the new one cannot be written
+     * @param progress receives the completed fraction (0 to 1) as the entries are encoded; may be
+     *                 {@code null}. It is called on the calling thread
+     * @throws IOException if the file cannot be written
      */
-    public void saveToTlkFile(String fileName, boolean isPC) throws IOException {
-        Files.deleteIfExists(Paths.get(fileName));
-
-        /* converts Huffmann Tree to binary form */
-        int[] treeBuffer = treeToBuffer();
-
-        /* preparing data and entries for writing to file
-         * entries list consists of pairs <String ID, Offset> */
-        List<BitArray> binaryData = new LinkedList<>();
-        Map<Integer, Integer> entries1 = new HashMap<>();
-        Map<Integer, Integer> entries2 = new HashMap<>();
-        int offset = 0;
+    public void saveToTlkFile(String fileName, DoubleConsumer progress) throws IOException {
+        ProgressReporter reporter = new ProgressReporter(progress, inputData.size());
+        List<TlkFile.TlkStringRef> male = new ArrayList<>();
+        List<TlkFile.TlkStringRef> female = new ArrayList<>();
+        Set<Integer> maleIds = new HashSet<>();
+        Map<String, Integer> offsetByText = new HashMap<>();
+        BitWriter data = new BitWriter();
 
         for (TlkEntry entry : inputData) {
-            if (entry.data == null) {
-                if (!entries1.containsKey(entry.stringId)) {
-                    entries1.put(entry.stringId, -1);
-                } else {
-                    entries2.put(entry.stringId, -1);
+            int offset = -1;
+            if (entry.data != null) {
+                Integer known = offsetByText.get(entry.data);
+                if (known == null) {
+                    known = data.bitCount();
+                    encode(entry.data, data);
+                    offsetByText.put(entry.data, known);
                 }
-                continue;
+                offset = known;
             }
+            TlkFile.TlkStringRef ref = new TlkFile.TlkStringRef(entry.stringId, offset);
+            (maleIds.add(entry.stringId) ? male : female).add(ref);
+            reporter.step();
+        }
 
-            if (!entries1.containsKey(entry.stringId)) {
-                entries1.put(entry.stringId, offset);
-            } else {
-                entries2.put(entry.stringId, offset);
+        int[] tree = treeToBuffer();
+        byte[] bytes = data.toByteArray();
+        TlkFile.TlkHeader header = new TlkFile.TlkHeader(male.size(), female.size(), tree.length / 2, bytes.length);
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Paths.get(fileName)))) {
+            header.write(out);
+            for (TlkFile.TlkStringRef ref : male) {
+                ref.write(out);
             }
-
-            /* for every character in a string and its terminator, put its binary code into data array */
-            for (char c : (entry.data + '\0').toCharArray()) {
-                binaryData.add(huffmanCodes.get(c));
-                offset += huffmanCodes.get(c).length();
+            for (TlkFile.TlkStringRef ref : female) {
+                ref.write(out);
             }
+            for (int child : tree) {
+                TlkFile.writeInt32(out, child);
+            }
+            out.write(bytes);
         }
+        reporter.finish();
+    }
 
-        /* preparing TLK Header */
-        int magic = 7040084;
-        int ver = 3;
-        int min_ver = 2;
-        int entry1Count = entries1.size();
-        int entry2Count = entries2.size();
-        int treeNodeCount = treeBuffer.length / 2;
-        int dataLength = offset / 8;
-        if (offset % 8 > 0) {
-            ++dataLength;
+    /**
+     * Appends the Huffman codes of a text and of its {@code '\0'} terminator.
+     *
+     * @param text the text, without terminator
+     * @param out  the data block being built
+     */
+    private void encode(String text, BitWriter out) {
+        for (int i = 0; i < text.length(); i++) {
+            out.append(huffmanCodes.get(text.charAt(i)));
         }
-
-        /* using LittleEndian for PC architecture and BigEndian for Xbox360 */
-//        MiscUtil.Conversion.EndianBitConverter bitConverter;
-//        if (isPC)
-//            bitConverter = new MiscUtil.Conversion.LittleEndianBitConverter();
-//        else
-//            bitConverter = new MiscUtil.Conversion.BigEndianBitConverter();
-
-        OutputStream bw = new FileOutputStream(fileName);
-
-//        var bw = new MiscUtil.IO.EndianBinaryWriter(bitConverter, File.OpenWrite(fileName));
-
-        /* writing TLK Header */
-        bw.write(magic);
-        bw.write(ver);
-        bw.write(min_ver);
-        bw.write(entry1Count);
-        bw.write(entry2Count);
-        bw.write(treeNodeCount);
-        bw.write(dataLength);
-
-        /* writing entries */
-        for (Map.Entry<Integer, Integer> entry : entries1.entrySet()) {
-            bw.write(entry.getKey());
-            bw.write(entry.getValue());
-        }
-        for (Map.Entry<Integer, Integer> entry : entries2.entrySet()) {
-            bw.write(entry.getKey());
-            bw.write(entry.getValue());
-        }
-
-        /* writing HuffmanTree */
-        for (int element : treeBuffer) {
-            bw.write(element);
-        }
-        /* writing data */
-        byte[] data = bitArrayListToByteArray(binaryData, offset);
-        bw.write(data);
-        bw.close();
+        out.append(huffmanCodes.get('\0'));
     }
 
     /**
@@ -381,11 +422,12 @@ class HuffmanCompression {
      * Reads one {@code <string>} element.
      *
      * <p>Reads the {@code <id>}, {@code <position>} and {@code <data>} children (missing ones
-     * default to 0, 0 and empty text; other children are ignored). An entry has text exactly if
-     * its id is not negative (see {@link TlkFile}). Text has its CRLF line breaks replaced with LF;
-     * if {@code debugVersion} is set and the {@link #NON_LOCALIZABLE_FLAG} of the id is clear, it
-     * is also prefixed with {@code "(#<id>) "}. An entry without text must have a negative number
-     * (normally {@code -1}) as its {@code <data>}.
+     * default to 0, 0 and empty text; other children are ignored). Whether the entry has text is
+     * taken from the {@code hasText} attribute of {@code <data>} if present, otherwise it has text
+     * exactly if the id is not negative (see {@link TlkFile}). Text has its CRLF line breaks
+     * replaced with LF; if {@code debugVersion} is set, the id is not negative and the
+     * {@link #NON_LOCALIZABLE_FLAG} is clear, it is also prefixed with {@code "(#<id>) "}. An entry
+     * without text must have a negative number (normally {@code -1}) as its {@code <data>}.
      *
      * @param reader       reader at the {@code <string>} start tag; left at its end tag
      * @param debugVersion whether to add the debug prefix
@@ -400,6 +442,7 @@ class HuffmanCompression {
         int id = 0;
         int position = 0;
         String data = "";
+        String hasTextAttribute = null;
         while (reader.next() != XMLStreamConstants.END_ELEMENT) {
             if (reader.getEventType() != XMLStreamConstants.START_ELEMENT) {
                 continue;
@@ -410,13 +453,15 @@ class HuffmanCompression {
             } else if (TlkFile.XML_POSITION.equals(name)) {
                 position = parseInt(readText(reader), name, line, file);
             } else if (TlkFile.XML_DATA.equals(name)) {
+                hasTextAttribute = reader.getAttributeValue(null, TlkFile.XML_HAS_TEXT);
                 data = readText(reader);
             } else {
                 readText(reader);
             }
         }
 
-        if (id < 0) {
+        boolean hasText = hasTextAttribute == null ? id >= 0 : parseBoolean(hasTextAttribute, line, file);
+        if (!hasText) {
             if (parseInt(data, TlkFile.XML_DATA, line, file) >= 0) {
                 throw new IOException("The <string> at line " + line + " (id " + id + ") has no text, so its <"
                         + TlkFile.XML_DATA + "> must be " + TlkFile.XML_NO_TEXT + ", not \"" + data + "\": " + file);
@@ -481,6 +526,23 @@ class HuffmanCompression {
     }
 
     /**
+     * Parses a {@code hasText} attribute.
+     *
+     * @param text the attribute value
+     * @param line line of the enclosing {@code <string>}, for the error message
+     * @param file the file, for the error message
+     * @return the value
+     * @throws IOException unless {@code text} is {@code true} or {@code false}
+     */
+    private static boolean parseBoolean(String text, int line, Path file) throws IOException {
+        if ("true".equals(text) || "false".equals(text)) {
+            return Boolean.parseBoolean(text);
+        }
+        throw new IOException("Invalid " + TlkFile.XML_HAS_TEXT + "=\"" + text + "\" in the <string> at line " + line
+                + " (must be true or false): " + file);
+    }
+
+    /**
      * Compares two dotted numeric version strings component by component; missing components
      * count as 0, so {@code "1.0.3"} equals {@code "1.0.3.0"}.
      *
@@ -504,11 +566,34 @@ class HuffmanCompression {
     }
 
     /**
+     * Checks that no string id occurs more than twice.
+     *
+     * @param fileName the file, for the error message
+     * @throws IOException naming the first id found three times and its positions
+     */
+    private void checkIdOccurrences(String fileName) throws IOException {
+        Map<Integer, Integer> occurrences = new HashMap<>();
+        for (TlkEntry entry : inputData) {
+            if (occurrences.merge(entry.stringId, 1, Integer::sum) > 2) {
+                List<Integer> positions = new ArrayList<>();
+                for (TlkEntry e : inputData) {
+                    if (e.stringId == entry.stringId) {
+                        positions.add(e.position);
+                    }
+                }
+                throw new IOException("String id " + entry.stringId + " occurs " + positions.size()
+                        + " times (positions " + positions + "), but a TLK file can only hold a male and a "
+                        + "female variant of a string: " + fileName);
+            }
+        }
+    }
+
+    /**
      * Creates the Huffman tree and the code of every character from the loaded texts.
      *
-     * <p>Counts every character of every text, plus one {@code '\0'} terminator per text, into
-     * {@link #frequencyCount} (entries without text are skipped), then builds the tree by
-     * repeatedly merging the two least frequent nodes (the less frequent one becomes the left
+     * <p>Counts every character of every distinct text, plus one {@code '\0'} terminator per
+     * text, into {@link #frequencyCount} (entries without text are skipped), then builds the tree
+     * by repeatedly merging the two least frequent nodes (the less frequent one becomes the left
      * child; ties go to the node created first) and derives the codes
      * ({@link #buildCodes(HuffmanNode, boolean[], int)}). With a single distinct character, the
      * root is that leaf and its code is a single 0 bit; without text there is no tree.
@@ -516,12 +601,15 @@ class HuffmanCompression {
      * @see <a href="https://en.wikipedia.org/wiki/Huffman_coding">Huffman coding (Wikipedia)</a>
      */
     private void prepareHuffmanCoding() {
+        Set<String> texts = new LinkedHashSet<>();
         for (TlkEntry entry : inputData) {
-            if (entry.data == null) {
-                continue;
+            if (entry.data != null) {
+                texts.add(entry.data);
             }
-            for (int i = 0; i < entry.data.length(); i++) {
-                frequencyCount.merge(entry.data.charAt(i), 1, Integer::sum);
+        }
+        for (String text : texts) {
+            for (int i = 0; i < text.length(); i++) {
+                frequencyCount.merge(text.charAt(i), 1, Integer::sum);
             }
             frequencyCount.merge('\0', 1, Integer::sum);
         }
@@ -610,58 +698,5 @@ class HuffmanCompression {
             buffer[2 * i + 1] = innerNodes.get(i).right.id;
         }
         return buffer;
-    }
-
-    /**
-     * Converts a list of {@link BitArray}s to an array of bytes ready to be written to a file.
-     *
-     * <p>The bit sequences are concatenated and packed least significant bit first: bit
-     * {@code k} of the stream becomes bit {@code k % 8} (value {@code 1 << (k % 8)}) of byte
-     * {@code k / 8}, the order {@link TlkFile} reads with {@link BitArray#getRev(int)}. The last
-     * byte is zero-padded.
-     *
-     * @param bitsList  bit sequences in output order (Huffman codes, read with
-     *                  {@link BitArray#get(int)})
-     * @param bitsCount total number of bits in {@code bitsList}; determines the array size
-     * @return {@code ceil(bitsCount / 8)} bytes
-     */
-    private static byte[] bitArrayListToByteArray(List<BitArray> bitsList, int bitsCount) {
-        final int BITSPERBYTE = 8;
-
-        int bytesize = bitsCount / BITSPERBYTE;
-        if (bitsCount % BITSPERBYTE > 0)
-            bytesize++;
-
-        byte[] bytes = new byte[bytesize];
-        int bytepos = 0;
-        int bitsRead = 0;
-        byte value = 0;
-        byte significance = 1;
-
-        for (BitArray bits : bitsList) {
-            int bitpos = 0;
-
-            while (bitpos < bits.length()) {
-                if (bits.get(bitpos)) {
-                    value += significance;
-                }
-                ++bitpos;
-                ++bitsRead;
-                if (bitsRead % BITSPERBYTE == 0) {
-                    bytes[bytepos] = value;
-                    ++bytepos;
-                    value = 0;
-                    significance = 1;
-                    bitsRead = 0;
-                }
-                else {
-                    significance <<= 1;
-                }
-            }
-        }
-        if (bitsRead % BITSPERBYTE != 0) {
-            bytes[bytepos] = value;
-        }
-        return bytes;
     }
 }

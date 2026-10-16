@@ -106,12 +106,6 @@ final class TestSupport {
         return (T) invoke(target.getClass(), target, name, types, args);
     }
 
-    /** Static variant of {@link #call(Object, String, Class[], Object...)}. */
-    @SuppressWarnings("unchecked")
-    static <T> T callStatic(Class<?> type, String name, Class<?>[] types, Object... args) throws Exception {
-        return (T) invoke(type, null, name, types, args);
-    }
-
     private static Object invoke(Class<?> type, Object target, String name, Class<?>[] types, Object[] args)
             throws Exception {
         Method m = type.getDeclaredMethod(name, types);

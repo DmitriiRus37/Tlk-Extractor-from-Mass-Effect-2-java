@@ -5,6 +5,7 @@ import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -60,8 +61,11 @@ import java.util.function.DoubleConsumer;
  * }</pre>
  * One {@code <string>} per string ref, in file order; {@code <position>} is the ref's index in
  * the file, which {@link HuffmanCompression} uses to restore the order. As in the C# original, an
- * entry without text has the {@code <data>} {@code -1}. Carriage returns are written as
- * {@code &#13;} so that XML parsers do not turn them into line feeds.
+ * entry without text has the {@code <data>} {@code -1}, and an entry is taken to have text exactly
+ * if its id is not negative (true for every entry of the game's files). An entry that breaks this
+ * rule gets the attribute {@code hasText="false"} or {@code hasText="true"} on its {@code <data>}
+ * element, so that it survives the round trip; older readers ignore the attribute. Carriage
+ * returns are written as {@code &#13;} so that XML parsers do not turn them into line feeds.
  */
 public class TlkFile {
 
@@ -79,6 +83,11 @@ public class TlkFile {
     static final String XML_POSITION = "position";
     /** Name of the XML element holding a string ref's text. */
     static final String XML_DATA = "data";
+    /**
+     * Optional attribute of {@code <data>} that says whether the entry has text, written only where
+     * the id's sign would suggest otherwise (see the class description).
+     */
+    static final String XML_HAS_TEXT = "hasText";
     /** {@code <data>} content of an entry without text. */
     static final String XML_NO_TEXT = "-1";
     /** Indentation of one XML nesting level. */
@@ -300,10 +309,9 @@ public class TlkFile {
      *
      * @param fileName path of the output file
      * @param format   output format
-     * @param progress meant to receive the completed fraction (0 to 1), e.g. the GUI progress
-     *                 bar; may be {@code null}. Currently never called. A plain
-     *                 {@link DoubleConsumer} rather than the GUI controller, so that the
-     *                 conversion classes compile without JavaFX
+     * @param progress receives the completed fraction (0 to 1) as the entries are written, for
+     *                 example to move a GUI progress bar; may be {@code null}. It is called on the
+     *                 calling thread
      * @throws IllegalStateException if no TLK file has been loaded
      * @throws IOException           if the file cannot be written, or a string contains a
      *                               character that XML 1.0 cannot represent (such as
@@ -313,19 +321,21 @@ public class TlkFile {
         if (stringRefs == null) {
             throw new IllegalStateException("No TLK file loaded; call loadTlkData first");
         }
+        ProgressReporter reporter = new ProgressReporter(progress, stringRefs.size());
         try (Writer out = Files.newBufferedWriter(Paths.get(fileName), StandardCharsets.UTF_8)) {
             switch (format) {
                 case XML:
-                    writeXml(out);
+                    writeXml(out, reporter);
                     break;
                 case TXT:
                 case CSV:
-                    writeText(out);
+                    writeText(out, reporter);
                     break;
                 default:
                     throw new IllegalArgumentException("Unsupported output format: " + format);
             }
         }
+        reporter.finish();
     }
 
     /**
@@ -333,10 +343,11 @@ public class TlkFile {
      * comments mark the beginning and end of the male and female sections; they are written even
      * if a section is empty.
      *
-     * @param out destination
+     * @param out      destination
+     * @param progress advanced once per entry
      * @throws IOException if writing fails or a string cannot be represented in XML
      */
-    private void writeXml(Writer out) throws IOException {
+    private void writeXml(Writer out, ProgressReporter progress) throws IOException {
         int maleCount = header.entry1Count;
         int lastPosition = header.entry1Count + header.entry2Count - 1;
         out.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -348,6 +359,7 @@ public class TlkFile {
                 writeSectionChange(out, lastPosition);
             }
             writeXmlEntry(out, ref);
+            progress.step();
         }
         if (index <= maleCount) {
             writeSectionChange(out, lastPosition);
@@ -387,11 +399,16 @@ public class TlkFile {
      * @throws IOException if writing fails or the text cannot be represented in XML
      */
     private static void writeXmlEntry(Writer out, TlkStringRef ref) throws IOException {
+        boolean hasText = ref.data != null;
         out.write(INDENT + "<" + XML_STRING + ">\n");
         out.write(INDENT + INDENT + "<" + XML_ID + ">" + ref.stringId + "</" + XML_ID + ">\n");
         out.write(INDENT + INDENT + "<" + XML_POSITION + ">" + ref.position + "</" + XML_POSITION + ">\n");
-        out.write(INDENT + INDENT + "<" + XML_DATA + ">");
-        if (ref.data != null) {
+        out.write(INDENT + INDENT + "<" + XML_DATA);
+        if (hasText != (ref.stringId >= 0)) {
+            out.write(" " + XML_HAS_TEXT + "=\"" + hasText + "\"");
+        }
+        out.write(">");
+        if (hasText) {
             writeEscaped(out, ref);
         } else {
             out.write(XML_NO_TEXT);
@@ -459,12 +476,14 @@ public class TlkFile {
      * Writes all string refs as plain text: one {@code "<stringId>: <data>"} line per entry,
      * terminated by CRLF ({@code data} prints as {@code null} for entries without text).
      *
-     * @param out destination
+     * @param out      destination
+     * @param progress advanced once per entry
      * @throws IOException if writing fails
      */
-    private void writeText(Writer out) throws IOException {
+    private void writeText(Writer out, ProgressReporter progress) throws IOException {
         for (TlkStringRef ref : stringRefs) {
             out.write(ref.stringId + ": " + ref.data + "\r\n");
+            progress.step();
         }
     }
 
@@ -489,7 +508,22 @@ public class TlkFile {
     }
 
     /**
-     * The fixed 28-byte header at the start of a TLK file: seven little-endian ints, read in the
+     * Writes a 32-bit signed integer little-endian (least significant byte first); the inverse of
+     * {@link #readInt32(InputStream)}.
+     *
+     * @param out   destination
+     * @param value the integer
+     * @throws IOException if writing fails
+     */
+    public static void writeInt32(OutputStream out, int value) throws IOException {
+        out.write(value);
+        out.write(value >>> 8);
+        out.write(value >>> 16);
+        out.write(value >>> 24);
+    }
+
+    /**
+     * The fixed 28-byte header at the start of a TLK file: seven little-endian ints, in the
      * order of the fields below.
      */
     public static class TlkHeader {
@@ -499,12 +533,16 @@ public class TlkFile {
         public static final int MAGIC = 7040084;
         /** What {@link #MAGIC} reads as in a big-endian (Xbox 360) file. */
         public static final int XBOX_MAGIC = 1416391424;
+        /** {@link #ver} of ME2 files, and the value {@link HuffmanCompression} writes. */
+        public static final int VERSION = 3;
+        /** {@link #minVer} of ME2 files, and the value {@link HuffmanCompression} writes. */
+        public static final int MIN_VERSION = 2;
 
         /** File signature; {@link #MAGIC} for a PC file. */
         public int magic;
-        /** Format version; 3 in ME2 files, and the value {@link HuffmanCompression} writes. */
+        /** Format version; {@link #VERSION} in ME2 files. Not validated. */
         public int ver;
-        /** Minimum version; 2 in ME2 files, and the value {@link HuffmanCompression} writes. */
+        /** Minimum version; {@link #MIN_VERSION} in ME2 files. Not validated. */
         public int minVer;
         /** Number of string refs in the first (male) section. */
         public int entry1Count;
@@ -522,13 +560,32 @@ public class TlkFile {
          * @throws IOException if reading fails or the stream ends inside the header
          */
         public TlkHeader(InputStream r) throws IOException {
-            this.magic = TlkFile.readInt32(r);
-            this.ver = TlkFile.readInt32(r);
-            this.minVer = TlkFile.readInt32(r);
-            this.entry1Count = TlkFile.readInt32(r);
-            this.entry2Count = TlkFile.readInt32(r);
-            this.treeNodeCount = TlkFile.readInt32(r);
-            this.dataLen = TlkFile.readInt32(r);
+            this.magic = readInt32(r);
+            this.ver = readInt32(r);
+            this.minVer = readInt32(r);
+            this.entry1Count = readInt32(r);
+            this.entry2Count = readInt32(r);
+            this.treeNodeCount = readInt32(r);
+            this.dataLen = readInt32(r);
+        }
+
+        /**
+         * Creates the header of a new PC file, with {@link #MAGIC}, {@link #VERSION} and
+         * {@link #MIN_VERSION}.
+         *
+         * @param entry1Count   number of string refs in the male section
+         * @param entry2Count   number of string refs in the female section
+         * @param treeNodeCount number of Huffman tree nodes
+         * @param dataLen       length of the data block in bytes
+         */
+        public TlkHeader(int entry1Count, int entry2Count, int treeNodeCount, int dataLen) {
+            this.magic = MAGIC;
+            this.ver = VERSION;
+            this.minVer = MIN_VERSION;
+            this.entry1Count = entry1Count;
+            this.entry2Count = entry2Count;
+            this.treeNodeCount = treeNodeCount;
+            this.dataLen = dataLen;
         }
 
         /**
@@ -538,6 +595,18 @@ public class TlkFile {
          */
         public long expectedFileSize() {
             return SIZE + 8L * entry1Count + 8L * entry2Count + 8L * treeNodeCount + dataLen;
+        }
+
+        /**
+         * Writes the seven fields, little-endian.
+         *
+         * @param out destination; advanced by 28 bytes
+         * @throws IOException if writing fails
+         */
+        public void write(OutputStream out) throws IOException {
+            for (int value : new int[]{magic, ver, minVer, entry1Count, entry2Count, treeNodeCount, dataLen}) {
+                writeInt32(out, value);
+            }
         }
     }
 
@@ -549,7 +618,7 @@ public class TlkFile {
         /**
          * The id the game uses to look the string up. In the bundled {@code BIOGame_RUS.tlk},
          * the entries with a negative id (top bit set) are exactly those with a
-         * {@link #bitOffset} of {@code -1}, i.e. without text; the XML round trip relies on that.
+         * {@link #bitOffset} of {@code -1}, i.e. without text.
          */
         public int stringId;
         /**
@@ -579,8 +648,30 @@ public class TlkFile {
          * @throws IOException if reading fails or the stream ends inside the entry
          */
         public TlkStringRef(InputStream r) throws IOException {
-            this.stringId = TlkFile.readInt32(r);
-            this.bitOffset = TlkFile.readInt32(r);
+            this.stringId = readInt32(r);
+            this.bitOffset = readInt32(r);
+        }
+
+        /**
+         * Creates an entry to be written.
+         *
+         * @param stringId  the string id
+         * @param bitOffset bit index of the text in the data block, or {@code -1} for no text
+         */
+        public TlkStringRef(int stringId, int bitOffset) {
+            this.stringId = stringId;
+            this.bitOffset = bitOffset;
+        }
+
+        /**
+         * Writes the id and the bit offset, little-endian.
+         *
+         * @param out destination; advanced by 8 bytes
+         * @throws IOException if writing fails
+         */
+        public void write(OutputStream out) throws IOException {
+            writeInt32(out, stringId);
+            writeInt32(out, bitOffset);
         }
     }
 
@@ -605,8 +696,30 @@ public class TlkFile {
          * @throws IOException if reading fails or the stream ends inside the node
          */
         public HuffmanNode(InputStream r) throws IOException {
-            this.leftNodeId = TlkFile.readInt32(r);
-            this.rightNodeId = TlkFile.readInt32(r);
+            this.leftNodeId = readInt32(r);
+            this.rightNodeId = readInt32(r);
+        }
+
+        /**
+         * Creates a node to be written.
+         *
+         * @param leftNodeId  child for a 0 bit
+         * @param rightNodeId child for a 1 bit
+         */
+        public HuffmanNode(int leftNodeId, int rightNodeId) {
+            this.leftNodeId = leftNodeId;
+            this.rightNodeId = rightNodeId;
+        }
+
+        /**
+         * Writes the left and the right child, little-endian.
+         *
+         * @param out destination; advanced by 8 bytes
+         * @throws IOException if writing fails
+         */
+        public void write(OutputStream out) throws IOException {
+            writeInt32(out, leftNodeId);
+            writeInt32(out, rightNodeId);
         }
     }
 }

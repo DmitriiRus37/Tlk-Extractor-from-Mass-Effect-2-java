@@ -2,6 +2,7 @@ package ru;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -13,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Reflective access to the internals of {@link HuffmanCompression}, plus checks of its Huffman
- * code and a test-side TLK writer used as an oracle while
- * {@link HuffmanCompression#saveToTlkFile(String, boolean)} is broken.
+ * code and an independent test-side TLK writer used as an oracle for
+ * {@link HuffmanCompression#saveToTlkFile(String, java.util.function.DoubleConsumer)}.
  */
 final class HuffmanAccess {
 
@@ -68,9 +69,17 @@ final class HuffmanAccess {
         return result;
     }
 
-    static byte[] pack(List<BitArray> bits, int bitCount) throws Exception {
-        return TestSupport.callStatic(HuffmanCompression.class, "bitArrayListToByteArray",
-                TestSupport.types(List.class, int.class), bits, bitCount);
+    /** Packs the bit sequences with {@link HuffmanCompression.BitWriter}. */
+    static byte[] pack(List<BitArray> bits) {
+        HuffmanCompression.BitWriter writer = new HuffmanCompression.BitWriter();
+        int count = 0;
+        for (BitArray b : bits) {
+            assertEquals(count, writer.bitCount());
+            writer.append(b);
+            count += b.length();
+        }
+        assertEquals(count, writer.bitCount());
+        return writer.toByteArray();
     }
 
     /** Evaluates {@code v1 sign v2} with {@link HuffmanCompression#compareVersions(String, String)}. */
@@ -161,9 +170,9 @@ final class HuffmanAccess {
     }
 
     /**
-     * A correct TLK file for the loaded entries, built with the compressor's own tree and codes:
-     * what {@code saveToTlkFile} is meant to write. The first entry of an id goes to the male
-     * section, later ones to the female section, each section in position order.
+     * A correct TLK file for the loaded entries, built independently with the compressor's own
+     * tree and codes (every text encoded separately, without sharing). The first entry of an id
+     * goes to the male section, later ones to the female section, each section in position order.
      */
     static TlkTestFile oracleTlk(HuffmanCompression hc) throws Exception {
         TlkTestFile file = new TlkTestFile().tree(treeBuffer(hc), codes(hc));
@@ -197,18 +206,22 @@ final class HuffmanAccess {
     }
 
     /**
-     * The data block {@code saveToTlkFile} should write: the codes of all characters of all
-     * entries with text plus their terminators, in position order, packed LSB first (computed
+     * The data block {@code saveToTlkFile} should write: the codes of every distinct text plus
+     * its terminator, in order of first occurrence (position order), packed LSB first (computed
      * independently of the production packing code).
      */
     static byte[] expectedDataBlock(HuffmanCompression hc) {
         Map<Character, BitArray> codes = codes(hc);
-        StringBuilder bits = new StringBuilder();
+        Set<String> texts = new LinkedHashSet<>();
         for (Entry e : entries(hc)) {
             if (e.data != null) {
-                for (char c : (e.data + '\0').toCharArray()) {
-                    bits.append(codeString(codes.get(c)));
-                }
+                texts.add(e.data);
+            }
+        }
+        StringBuilder bits = new StringBuilder();
+        for (String text : texts) {
+            for (char c : (text + '\0').toCharArray()) {
+                bits.append(codeString(codes.get(c)));
             }
         }
         byte[] data = new byte[(bits.length() + 7) / 8];

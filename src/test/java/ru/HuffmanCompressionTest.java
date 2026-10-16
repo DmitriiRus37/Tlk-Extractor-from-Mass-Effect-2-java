@@ -1,6 +1,5 @@
 package ru;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -83,6 +82,17 @@ class HuffmanCompressionTest {
     /** Builds the oracle TLK for {@code hc} and loads it back with {@link TlkFile}. */
     private TlkFile roundTrip(HuffmanCompression hc) throws Exception {
         Path tlk = HuffmanAccess.oracleTlk(hc).writeTo(dir.resolve("oracle" + (fileCounter++) + ".tlk"));
+        return loadTlk(tlk);
+    }
+
+    /** Writes {@code hc} with {@code saveToTlkFile} and loads the result with {@link TlkFile}. */
+    private TlkFile save(HuffmanCompression hc) throws Exception {
+        Path tlk = dir.resolve("saved" + (fileCounter++) + ".tlk");
+        hc.saveToTlkFile(tlk.toString(), null);
+        return loadTlk(tlk);
+    }
+
+    private static TlkFile loadTlk(Path tlk) throws IOException {
         TlkFile t = new TlkFile();
         t.loadTlkData(tlk.toString());
         return t;
@@ -260,6 +270,31 @@ class HuffmanCompressionTest {
         }
 
         @Test
+        void onlyXmlInputIsSupported() {
+            for (FileFormat format : Arrays.asList(FileFormat.TXT, FileFormat.CSV)) {
+                HuffmanCompression hc = new HuffmanCompression();
+                assertThrows(IllegalArgumentException.class,
+                        () -> hc.loadInputData(small().toString(), format, false));
+            }
+        }
+
+        @Test
+        void hasTextAttributeOverridesTheSignOfTheId() throws Exception {
+            HuffmanCompression hc = load(xml("1.0.4",
+                    "<string><id>5</id><position>0</position><data hasText=\"false\">-1</data></string>",
+                    "<string><id>-6</id><position>1</position><data hasText=\"true\">negative</data></string>",
+                    "<string><id>7</id><position>2</position><data hasText=\"true\">-1</data></string>",
+                    "<string><id>-8</id><position>3</position><data hasText=\"false\">-1</data></string>"));
+            assertEquals(Arrays.asList(null, "negative", "-1", null), data(hc));
+        }
+
+        @Test
+        void rejectsAnInvalidHasTextAttribute() throws IOException {
+            assertLoadFails(xml("1.0.4", "<string><id>5</id><position>0</position><data hasText=\"no\">x</data></string>"),
+                    "hasText=\"no\"");
+        }
+
+        @Test
         void entryWithoutTextMustHoldANegativeNumber() throws Exception {
             assertLoadFails(xml("1.0.4", entry(1, 0, "a"), entry(-2, 1, "not a number")), "Invalid <data> \"not a number\"");
             assertLoadFails(xml("1.0.4", entry(-2, 0, "5")), "must be -1");
@@ -303,6 +338,12 @@ class HuffmanCompressionTest {
             assertTrue(HuffmanAccess.codes(hc).isEmpty());
             assertTrue(HuffmanAccess.treeBuffer(hc).isEmpty());
         }
+
+        @Test
+        void thirdOccurrenceOfAnIdIsRejected() throws IOException {
+            Path in = xml("1.0.4", entry(5, 0, "one"), entry(6, 1, "x"), entry(5, 2, "two"), entry(5, 3, "three"));
+            assertLoadFails(in, "String id 5 occurs 3 times (positions [0, 2, 3])");
+        }
     }
 
     // ---------------------------------------------------------------- Huffman code
@@ -317,6 +358,16 @@ class HuffmanCompressionTest {
             expected.put('a', 1);
             expected.put('b', 3);
             expected.put('\0', 2);
+            assertEquals(expected, HuffmanAccess.frequencies(hc));
+        }
+
+        @Test
+        void identicalTextsAreCountedOnce() throws Exception {
+            HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, "ab"), entry(2, 1, "ab"), entry(1, 2, "ab")));
+            Map<Character, Integer> expected = new HashMap<>();
+            expected.put('a', 1);
+            expected.put('b', 1);
+            expected.put('\0', 1);
             assertEquals(expected, HuffmanAccess.frequencies(hc));
         }
 
@@ -402,6 +453,7 @@ class HuffmanCompressionTest {
             assertTrue(HuffmanAccess.codes(hc).get('\0').length() >= 1, "empty code for '\\0'");
             assertEquals(Arrays.asList(-1, -1), HuffmanAccess.treeBuffer(hc));
             assertEquals(Arrays.asList("", ""), texts(roundTrip(hc)));
+            assertEquals(Arrays.asList("", ""), texts(save(hc)));
         }
 
         @Test
@@ -427,54 +479,52 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        void packsLeastSignificantBitFirst() throws Exception {
+        void packsLeastSignificantBitFirst() {
             // stream 1 0 1 1 1 1 1 1 | 1 -> 0b11111101, 0b00000001
             assertArrayEquals(new byte[]{(byte) 0xfd, 0x01},
-                    HuffmanAccess.pack(Arrays.asList(bits("101"), bits("111111")), 9));
+                    HuffmanAccess.pack(Arrays.asList(bits("101"), bits("111111"))));
         }
 
         @Test
-        void exactByteBoundaries() throws Exception {
-            assertArrayEquals(new byte[]{0x01}, HuffmanAccess.pack(Collections.singletonList(bits("10000000")), 8));
-            assertArrayEquals(new byte[]{(byte) 0x80}, HuffmanAccess.pack(Collections.singletonList(bits("00000001")), 8));
+        void exactByteBoundaries() {
+            assertArrayEquals(new byte[]{0x01}, HuffmanAccess.pack(Collections.singletonList(bits("10000000"))));
+            assertArrayEquals(new byte[]{(byte) 0x80}, HuffmanAccess.pack(Collections.singletonList(bits("00000001"))));
             assertArrayEquals(new byte[]{(byte) 0xff, (byte) 0xff},
-                    HuffmanAccess.pack(Arrays.asList(bits("1111"), bits("111111111111")), 16));
+                    HuffmanAccess.pack(Arrays.asList(bits("1111"), bits("111111111111"))));
         }
 
         @Test
-        void codesSpanningBytesAndPadding() throws Exception {
+        void codesSpanningBytesAndPadding() {
             // 3 + 3 + 3 bits: 110 011 101 -> bits 0..8 = 1,1,0,0,1,1,1,0,1
             assertArrayEquals(new byte[]{0x73, 0x01},
-                    HuffmanAccess.pack(Arrays.asList(bits("110"), bits("011"), bits("101")), 9));
+                    HuffmanAccess.pack(Arrays.asList(bits("110"), bits("011"), bits("101"))));
         }
 
         @Test
-        void emptyInput() throws Exception {
-            assertArrayEquals(new byte[0], HuffmanAccess.pack(Collections.<BitArray>emptyList(), 0));
-            assertArrayEquals(new byte[0], HuffmanAccess.pack(Collections.singletonList(new BitArray(0)), 0));
+        void emptyInput() {
+            assertArrayEquals(new byte[0], HuffmanAccess.pack(Collections.<BitArray>emptyList()));
+            assertArrayEquals(new byte[0], HuffmanAccess.pack(Collections.singletonList(new BitArray(0))));
         }
 
         @Test
-        void zeroLengthCodesAreSkipped() throws Exception {
+        void zeroLengthCodesAreSkipped() {
             assertArrayEquals(new byte[]{0x05},
-                    HuffmanAccess.pack(Arrays.asList(bits("1"), new BitArray(0), bits("01")), 3));
+                    HuffmanAccess.pack(Arrays.asList(bits("1"), new BitArray(0), bits("01"))));
         }
 
         @Test
-        void matchesTheIndependentPackingOfTheTestOracle() throws Exception {
-            HuffmanCompression hc = load(small());
+        void growsBeyondItsInitialBuffer() {
             List<BitArray> stream = new ArrayList<>();
-            int count = 0;
-            for (HuffmanAccess.Entry e : HuffmanAccess.entries(hc)) {
-                if (e.data != null) {
-                    for (char c : (e.data + '\0').toCharArray()) {
-                        BitArray code = HuffmanAccess.codes(hc).get(c);
-                        stream.add(code);
-                        count += code.length();
-                    }
-                }
+            for (int i = 0; i < 3000; i++) {
+                stream.add(bits(i % 3 == 0 ? "1" : "0000001"));
             }
-            assertArrayEquals(HuffmanAccess.expectedDataBlock(hc), HuffmanAccess.pack(stream, count));
+            byte[] packed = HuffmanAccess.pack(stream);
+            int ones = 0;
+            for (byte b : packed) {
+                ones += Integer.bitCount(b & 0xff);
+            }
+            assertEquals(3000, ones);
+            assertEquals((1000 + 2000 * 7 + 7) / 8, packed.length);
         }
     }
 
@@ -572,7 +622,7 @@ class HuffmanCompressionTest {
         void writesAFileEndingWithTheEncodedData() throws Exception {
             HuffmanCompression hc = load(small());
             Path out = dir.resolve("out.tlk");
-            hc.saveToTlkFile(out.toString(), true);
+            hc.saveToTlkFile(out.toString(), null);
             byte[] written = Files.readAllBytes(out);
             byte[] data = HuffmanAccess.expectedDataBlock(hc);
             assertTrue(written.length > data.length);
@@ -581,12 +631,34 @@ class HuffmanCompressionTest {
         }
 
         @Test
+        void writesTheLittleEndianLayout() throws Exception {
+            HuffmanCompression hc = load(small());
+            Path out = dir.resolve("layout.tlk");
+            hc.saveToTlkFile(out.toString(), null);
+            byte[] written = Files.readAllBytes(out);
+            List<Integer> tree = HuffmanAccess.treeBuffer(hc);
+            byte[] data = HuffmanAccess.expectedDataBlock(hc);
+            // header, 6 male and 2 female refs, the tree, the data
+            assertArrayEquals(TlkTestFile.intsLE(TlkTestFile.MAGIC, 3, 2, 6, 2, tree.size() / 2, data.length),
+                    Arrays.copyOf(written, TlkTestFile.HEADER_SIZE));
+            assertEquals(TlkTestFile.HEADER_SIZE + 8 * 8 + 4 * tree.size() + data.length, written.length);
+            int treeOffset = TlkTestFile.HEADER_SIZE + 8 * 8;
+            for (int i = 0; i < tree.size(); i++) {
+                assertArrayEquals(TlkTestFile.intsLE(tree.get(i)),
+                        Arrays.copyOfRange(written, treeOffset + 4 * i, treeOffset + 4 * i + 4), "tree int " + i);
+            }
+            // the ref without text (id -7, position 2) has offset -1
+            assertArrayEquals(TlkTestFile.intsLE(-7, -1),
+                    Arrays.copyOfRange(written, TlkTestFile.HEADER_SIZE + 16, TlkTestFile.HEADER_SIZE + 24));
+        }
+
+        @Test
         void replacesAnExistingFile() throws Exception {
             Path out = dir.resolve("existing.tlk");
             byte[] junk = new byte[100_000];
             Arrays.fill(junk, (byte) 'x');
             Files.write(out, junk);
-            load(small()).saveToTlkFile(out.toString(), true);
+            load(small()).saveToTlkFile(out.toString(), null);
             assertTrue(Files.size(out) < junk.length);
             assertNotEquals('x', Files.readAllBytes(out)[0]);
         }
@@ -594,66 +666,118 @@ class HuffmanCompressionTest {
         @Test
         void entryWithoutTextInBothSections() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4", entry(-5, 0, "-1"), entry(1, 1, "a"), entry(-5, 2, "-1")));
-            Path out = dir.resolve("negative.tlk");
-            hc.saveToTlkFile(out.toString(), true);
-            byte[] written = Files.readAllBytes(out);
-            byte[] data = HuffmanAccess.expectedDataBlock(hc);
-            assertArrayEquals(data, Arrays.copyOfRange(written, written.length - data.length, written.length));
-
-            TlkFile t = roundTrip(hc);
-            assertEquals(2, TlkFileTest.header(t).entry1Count);
-            assertEquals(1, TlkFileTest.header(t).entry2Count);
-            assertEquals(Arrays.asList(null, "a", null), texts(t));
+            for (TlkFile t : Arrays.asList(roundTrip(hc), save(hc))) {
+                assertEquals(2, TlkFileTest.header(t).entry1Count);
+                assertEquals(1, TlkFileTest.header(t).entry2Count);
+                assertEquals(Arrays.asList(null, "a", null), texts(t));
+                assertEquals(-1, TlkFileTest.refs(t).get(2).bitOffset);
+            }
         }
 
         @Test
         void unwritableTargetFails() throws Exception {
             HuffmanCompression hc = load(small());
             String out = dir.resolve("missing-dir").resolve("out.tlk").toString();
-            assertThrows(IOException.class, () -> hc.saveToTlkFile(out, true));
+            assertThrows(IOException.class, () -> hc.saveToTlkFile(out, null));
         }
 
         @Test
-        @Disabled("Known bug: saveToTlkFile writes only the low byte of every int (OutputStream.write(int)) "
-                + "and keeps entries in HashMaps, so the TLK it writes cannot be loaded back")
         void savedTlkLoadsBack() throws Exception {
-            Path out = dir.resolve("saved.tlk");
-            load(small()).saveToTlkFile(out.toString(), true);
-            TlkFile t = new TlkFile();
-            t.loadTlkData(out.toString());
+            TlkFile t = save(load(small()));
             assertEquals(6, TlkFileTest.header(t).entry1Count);
             assertEquals(2, TlkFileTest.header(t).entry2Count);
             assertEquals(Arrays.asList("Hello", CYRILLIC, null, "Male", "", "Line one\nLine two\t(tab)",
                     "Hello, <Shepard> & co.", "Female"), texts(t));
+            int[] ids = {100, 101, -7, 134217731, 102, 103, 100, 134217731};
+            for (int i = 0; i < ids.length; i++) {
+                assertEquals(ids[i], TlkFileTest.refs(t).get(i).stringId);
+            }
         }
 
         @Test
-        @Disabled("Known bug: saveToTlkFile keeps the string refs in HashMaps, so their order is lost "
-                + "(and the low-byte int bug prevents reloading)")
         void savedTlkKeepsThePositionOrder() throws Exception {
             int[] ids = {1000, 3, 77, 500000, 42, 9, 65536, 12};
             List<String> strings = new ArrayList<>();
             for (int i = 0; i < ids.length; i++) {
-                strings.add(entry(ids[i], i, "s" + i));
+                strings.add(entry(ids[i], ids.length - 1 - i, "s" + i));
             }
-            Path out = dir.resolve("ordered.tlk");
-            load(xml("1.0.4", strings.toArray(new String[0]))).saveToTlkFile(out.toString(), true);
-            TlkFile t = new TlkFile();
-            t.loadTlkData(out.toString());
-            List<TlkFile.TlkStringRef> refs = TlkFileTest.refs(t);
+            List<TlkFile.TlkStringRef> refs = TlkFileTest.refs(save(load(xml("1.0.4", strings.toArray(new String[0])))));
             for (int i = 0; i < ids.length; i++) {
-                assertEquals(ids[i], refs.get(i).stringId, "position " + i);
-                assertEquals("s" + i, refs.get(i).data);
+                int expected = ids.length - 1 - i;
+                assertEquals(ids[expected], refs.get(i).stringId, "position " + i);
+                assertEquals("s" + expected, refs.get(i).data);
             }
         }
 
         @Test
-        @Disabled("Bug: a third entry with the same id silently replaces the second (female) one instead of "
-                + "being rejected")
-        void thirdOccurrenceOfAnIdIsRejected() throws Exception {
-            Path in = xml("1.0.4", entry(5, 0, "one"), entry(5, 1, "two"), entry(5, 2, "three"));
-            String out = dir.resolve("dup.tlk").toString();
-            assertThrows(Exception.class, () -> load(in).saveToTlkFile(out, true));
+        void secondOccurrencesFormTheFemaleSectionInPositionOrder() throws Exception {
+            TlkFile t = save(load(xml("1.0.4", entry(1, 0, "a"), entry(2, 1, "b"), entry(2, 2, "B"),
+                    entry(3, 3, "c"), entry(1, 4, "A"))));
+            assertEquals(3, TlkFileTest.header(t).entry1Count);
+            assertEquals(2, TlkFileTest.header(t).entry2Count);
+            assertEquals(Arrays.asList("a", "b", "c", "B", "A"), texts(t));
+        }
+
+        @Test
+        void identicalTextsShareOneBitOffset() throws Exception {
+            HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, "same"), entry(2, 1, "other"),
+                    entry(3, 2, "same"), entry(1, 3, "same")));
+            TlkFile t = save(hc);
+            List<TlkFile.TlkStringRef> refs = TlkFileTest.refs(t);
+            assertEquals(refs.get(0).bitOffset, refs.get(2).bitOffset);
+            assertEquals(refs.get(0).bitOffset, refs.get(3).bitOffset);
+            assertNotEquals(refs.get(0).bitOffset, refs.get(1).bitOffset);
+            assertEquals(Arrays.asList("same", "other", "same", "same"), texts(t));
+            assertEquals(HuffmanAccess.expectedDataBlock(hc).length, TlkFileTest.header(t).dataLen);
+        }
+
+        @Test
+        void emptyInputGivesAnEmptyTlk() throws Exception {
+            TlkFile t = save(load(TestSupport.resource("/xml/empty.xml")));
+            assertEquals(0, TlkFileTest.header(t).entry1Count);
+            assertEquals(0, TlkFileTest.header(t).treeNodeCount);
+            assertEquals(0, TlkFileTest.header(t).dataLen);
+            assertTrue(TlkFileTest.refs(t).isEmpty());
+        }
+
+        @Test
+        void onlyEntriesWithoutTextGiveATlkWithoutTree() throws Exception {
+            TlkFile t = save(load(xml("1.0.4", entry(-1, 0, "-1"), entry(-2, 1, "-1"))));
+            assertEquals(2, TlkFileTest.header(t).entry1Count);
+            assertEquals(0, TlkFileTest.header(t).treeNodeCount);
+            assertEquals(Arrays.asList(null, null), texts(t));
+        }
+
+        @Test
+        void reportsProgressUpToOne() throws Exception {
+            final List<Double> reported = new ArrayList<>();
+            load(small()).saveToTlkFile(dir.resolve("progress.tlk").toString(), reported::add);
+            assertFalse(reported.isEmpty());
+            assertEquals(1.0, reported.get(reported.size() - 1), 0.0);
+            for (int i = 1; i < reported.size(); i++) {
+                assertTrue(reported.get(i) > reported.get(i - 1), reported.toString());
+            }
+        }
+
+        @Test
+        void savingWithoutLoadingWritesAnEmptyTlk() throws Exception {
+            TlkFile t = save(new HuffmanCompression());
+            assertTrue(TlkFileTest.refs(t).isEmpty());
+        }
+
+        @Test
+        void entriesThatBreakTheIdSignRuleSurviveTlkToXmlToTlk() throws Exception {
+            // ids >= 0 normally have text and negative ids none; the hasText attribute keeps the others
+            Path tlk = new TlkTestFile().male(1, "-1").maleRaw(2, -1).male(-3, "negative").maleRaw(-4, -1)
+                    .writeTo(dir.resolve("signs.tlk"));
+            Path xml = dir.resolve("signs.xml");
+            loadTlk(tlk).storeToFile(xml.toString(), FileFormat.XML, null);
+            TlkFile t = save(load(xml));
+            assertEquals(Arrays.asList("-1", null, "negative", null), texts(t));
+            int[] ids = {1, 2, -3, -4};
+            for (int i = 0; i < ids.length; i++) {
+                assertEquals(ids[i], TlkFileTest.refs(t).get(i).stringId);
+            }
         }
     }
 
