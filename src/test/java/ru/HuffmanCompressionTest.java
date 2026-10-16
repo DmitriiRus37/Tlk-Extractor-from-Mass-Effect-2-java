@@ -546,6 +546,32 @@ class HuffmanCompressionTest {
             }
             assertArrayEquals(bitwise.toByteArray(), packed.toByteArray());
         }
+
+        @Test
+        void copyIntoJoinsStreamsAtAnyBitOffset() {
+            java.util.Random random = new java.util.Random(5);
+            for (int round = 0; round < 500; round++) {
+                HuffmanCompression.BitWriter whole = new HuffmanCompression.BitWriter();
+                List<HuffmanCompression.BitWriter> parts = new ArrayList<>();
+                for (int p = random.nextInt(5); p >= 0; p--) {
+                    HuffmanCompression.BitWriter part = new HuffmanCompression.BitWriter();
+                    for (int c = random.nextInt(6); c > 0; c--) {
+                        int length = 1 + random.nextInt(20);
+                        long code = random.nextLong() >>> (Long.SIZE - length);
+                        part.append(code, length);
+                        whole.append(code, length);
+                    }
+                    parts.add(part);
+                }
+                byte[] joined = new byte[whole.toByteArray().length];
+                int offset = 0;
+                for (HuffmanCompression.BitWriter part : parts) {
+                    part.copyInto(joined, offset);
+                    offset += part.bitCount();
+                }
+                assertArrayEquals(whole.toByteArray(), joined);
+            }
+        }
     }
 
     // ---------------------------------------------------------------- version comparison

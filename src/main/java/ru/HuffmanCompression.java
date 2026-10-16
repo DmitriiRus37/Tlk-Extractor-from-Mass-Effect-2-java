@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.DoubleConsumer;
 
 /**
@@ -52,6 +53,8 @@ class HuffmanCompression {
     static final int NON_LOCALIZABLE_FLAG = 0x0800_0000;
     /** Line break that the C# original's version 1.0.1 started replacing, since the game shows it twice. */
     private static final String CRLF = "\r\n";
+    /** Number of distinct texts {@link #saveToTlkFile(String, DoubleConsumer)} encodes per task. */
+    private static final int ENCODE_CHUNK = 1024;
 
     /**
      * {@code TLKToolVersion} of the loaded file ({@link TlkFile} writes {@value TlkFile#TOOL_VERSION}),
@@ -251,6 +254,31 @@ class HuffmanCompression {
         byte[] toByteArray() {
             return Arrays.copyOf(bytes, (int) (((long) bitCount + 7) / 8));
         }
+
+        /**
+         * ORs the written bits into a byte array that holds a longer stream, starting at a bit
+         * offset; the bits there must still be zero.
+         *
+         * @param target   the longer stream, packed the same way
+         * @param startBit offset of the first bit in {@code target}
+         */
+        void copyInto(byte[] target, int startBit) {
+            int length = (int) (((long) bitCount + 7) / 8);
+            int index = startBit >>> 3;
+            int shift = startBit & 7;
+            if (shift == 0) {
+                System.arraycopy(bytes, 0, target, index, length);
+                return;
+            }
+            for (int i = 0; i < length; i++) {
+                int b = bytes[i] & 0xff;
+                target[index + i] |= (byte) (b << shift);
+                int high = b >>> (8 - shift);
+                if (high != 0) {
+                    target[index + i + 1] |= (byte) high;
+                }
+            }
+        }
     }
 
     /**
@@ -384,30 +412,38 @@ class HuffmanCompression {
      */
     public void saveToTlkFile(String fileName, DoubleConsumer progress) throws IOException {
         ProgressReporter reporter = new ProgressReporter(progress, inputData.size());
+        // number the distinct texts in order of first occurrence
+        Map<String, Integer> indexByText = new HashMap<>();
+        List<String> texts = new ArrayList<>();
+        int[] textIndex = new int[inputData.size()];
+        for (int i = 0; i < textIndex.length; i++) {
+            String text = inputData.get(i).data;
+            if (text == null) {
+                textIndex[i] = -1;
+                continue;
+            }
+            Integer index = indexByText.putIfAbsent(text, texts.size());
+            if (index == null) {
+                index = texts.size();
+                texts.add(text);
+            }
+            textIndex[i] = index;
+        }
+
+        int[] offsets = new int[texts.size()];
+        byte[] bytes = encodeTexts(texts, offsets, textIndex, reporter);
+
         List<TlkFile.TlkStringRef> male = new ArrayList<>();
         List<TlkFile.TlkStringRef> female = new ArrayList<>();
         Set<Integer> maleIds = new HashSet<>();
-        Map<String, Integer> offsetByText = new HashMap<>();
-        BitWriter data = new BitWriter();
-
-        for (TlkEntry entry : inputData) {
-            int offset = -1;
-            if (entry.data != null) {
-                Integer known = offsetByText.get(entry.data);
-                if (known == null) {
-                    known = data.bitCount();
-                    encode(entry.data, data);
-                    offsetByText.put(entry.data, known);
-                }
-                offset = known;
-            }
+        for (int i = 0; i < textIndex.length; i++) {
+            TlkEntry entry = inputData.get(i);
+            int offset = textIndex[i] < 0 ? -1 : offsets[textIndex[i]];
             TlkFile.TlkStringRef ref = new TlkFile.TlkStringRef(entry.stringId, offset);
             (maleIds.add(entry.stringId) ? male : female).add(ref);
-            reporter.step();
         }
 
         int[] tree = treeToBuffer();
-        byte[] bytes = data.toByteArray();
         TlkFile.TlkHeader header = new TlkFile.TlkHeader(male.size(), female.size(), tree.length / 2, bytes.length);
         try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Paths.get(fileName)))) {
             header.write(out);
@@ -423,6 +459,68 @@ class HuffmanCompression {
             out.write(bytes);
         }
         reporter.finish();
+    }
+
+    /**
+     * Encodes the texts into the data block, one after the other, each with its terminator.
+     *
+     * <p>Chunks of {@value #ENCODE_CHUNK} texts are encoded in parallel ({@link Workers}), each
+     * into its own buffer from bit 0, noting where its texts start. The calling thread waits for
+     * the chunks in order, reporting progress for the entries whose texts are done, then copies
+     * them into the data block, shifted to the bit where each chunk starts.
+     *
+     * @param texts     the distinct texts, in storage order
+     * @param offsets   receives the bit offset of each text
+     * @param textIndex for each entry, the index of its text, or {@code -1} if it has none
+     * @param progress  advanced once per entry, on the calling thread
+     * @return the data block; the last byte is zero-padded
+     * @throws IllegalStateException if the data block would exceed {@link Integer#MAX_VALUE}
+     *                               bits, the largest bit offset a TLK file can hold
+     */
+    private byte[] encodeTexts(List<String> texts, int[] offsets, int[] textIndex, ProgressReporter progress) {
+        List<CompletableFuture<BitWriter>> chunks = new ArrayList<>();
+        for (int from = 0; from < texts.size(); from += ENCODE_CHUNK) {
+            int start = from;
+            int end = Math.min(texts.size(), from + ENCODE_CHUNK);
+            chunks.add(CompletableFuture.supplyAsync(() -> {
+                BitWriter writer = new BitWriter();
+                for (int i = start; i < end; i++) {
+                    offsets[i] = writer.bitCount();
+                    encode(texts.get(i), writer);
+                }
+                return writer;
+            }, Workers.pool()));
+        }
+
+        BitWriter[] encoded = new BitWriter[chunks.size()];
+        long[] chunkStart = new long[chunks.size() + 1];
+        int entry = 0;
+        for (int k = 0; k < chunks.size(); k++) {
+            encoded[k] = chunks.get(k).join();
+            chunkStart[k + 1] = chunkStart[k] + encoded[k].bitCount();
+            int done = Math.min(texts.size(), (k + 1) * ENCODE_CHUNK);
+            // texts are numbered in order of first occurrence, so the finished entries come first
+            for (; entry < textIndex.length && textIndex[entry] < done; entry++) {
+                progress.step();
+            }
+        }
+        for (; entry < textIndex.length; entry++) {
+            progress.step();
+        }
+        long totalBits = chunkStart[chunks.size()];
+        if (totalBits > Integer.MAX_VALUE) {
+            throw new IllegalStateException("The TLK data block would exceed " + Integer.MAX_VALUE + " bits");
+        }
+
+        byte[] data = new byte[(int) ((totalBits + 7) / 8)];
+        for (int k = 0; k < chunks.size(); k++) {
+            int base = (int) chunkStart[k];
+            for (int i = k * ENCODE_CHUNK; i < Math.min(texts.size(), (k + 1) * ENCODE_CHUNK); i++) {
+                offsets[i] += base;
+            }
+            encoded[k].copyInto(data, base);
+        }
+        return data;
     }
 
     /**
