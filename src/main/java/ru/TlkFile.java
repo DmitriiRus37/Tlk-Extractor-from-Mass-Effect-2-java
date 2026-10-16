@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.DoubleConsumer;
+import java.util.stream.IntStream;
 
 /**
  * Reads a Mass Effect 2 {@code .tlk} string table and writes it out as XML, TXT or CSV: the
@@ -125,15 +126,10 @@ public class TlkFile {
             new DataInputStream(in).readFully(data);
             BitArray newBits = new BitArray(data);
 
-            Map<Integer, String> textByOffset = new HashMap<>();
+            Map<Integer, String> textByOffset = decodeStrings(refs, tree, data, fileName);
             for (TlkStringRef ref : refs) {
                 if (ref.bitOffset >= 0) {
-                    String text = textByOffset.get(ref.bitOffset);
-                    if (text == null) {
-                        text = decodeString(tree, newBits, ref.bitOffset, fileName);
-                        textByOffset.put(ref.bitOffset, text);
-                    }
-                    ref.data = text;
+                    ref.data = textByOffset.get(ref.bitOffset);
                 }
             }
 
@@ -200,44 +196,48 @@ public class TlkFile {
     }
 
     /**
-     * Decodes one NUL-terminated string by walking the Huffman tree.
+     * Decodes the text of every distinct non-negative bit offset of the refs with
+     * {@link HuffmanDecoder}, which walks the Huffman tree from the root: a 1 bit (read LSB-first,
+     * as {@link BitArray#getRev(int)} does) selects the right child, a 0 bit the left one, and a
+     * negative child id is a leaf for the character {@link #leafCharacter(int)}, after which
+     * decoding restarts at the root. The {@code '\0'} leaf ends a string.
      *
-     * <p>Starting at the root, each bit (read LSB-first with {@link BitArray#getRev(int)}) selects
-     * the right child if it is 1 and the left child if it is 0. A non-negative child id is the
-     * index of an inner node; a negative id is a leaf for the character
-     * {@link #leafCharacter(int)}, after which decoding restarts at the root. The {@code '\0'} leaf
-     * ends the string.
+     * <p>The strings are independent, so they are decoded in parallel. Errors are reported as a
+     * sequential decoder would: for the first offset in ref order that fails.
      *
-     * @param tree      the Huffman tree, root first
-     * @param bits      the compressed data
-     * @param bitOffset bit index to start decoding at
-     * @param fileName  path of the file, for error messages
-     * @return the decoded string without its terminator
-     * @throws IOException if the tree is empty or the data ends before a terminator
+     * @param refs     the string refs
+     * @param tree     the Huffman tree, root first, already checked with {@link #checkTree}
+     * @param data     the data block
+     * @param fileName path of the file, for error messages
+     * @return the text, without terminator, of each offset
+     * @throws IOException if there are strings but no tree, or a string has no terminator
      */
-    private static String decodeString(List<HuffmanNode> tree, BitArray bits, int bitOffset, String fileName)
-            throws IOException {
+    private static Map<Integer, String> decodeStrings(List<TlkStringRef> refs, List<HuffmanNode> tree, byte[] data,
+                                                      String fileName) throws IOException {
+        int[] offsets = refs.stream().mapToInt(ref -> ref.bitOffset).filter(offset -> offset >= 0).distinct().toArray();
+        Map<Integer, String> textByOffset = new HashMap<>(2 * offsets.length);
+        if (offsets.length == 0) {
+            return textByOffset;
+        }
         if (tree.isEmpty()) {
             throw new IOException("Corrupt TLK file (it has strings but no Huffman tree): " + fileName);
         }
-        HuffmanNode root = tree.get(0);
-        HuffmanNode node = root;
-        StringBuilder text = new StringBuilder();
-        for (int i = bitOffset; i < bits.length(); i++) {
-            int next = bits.getRev(i) ? node.rightNodeId : node.leftNodeId;
-            if (next >= 0) {
-                node = tree.get(next);
-            } else {
-                char c = leafCharacter(next);
-                if (c == '\0') {
-                    return text.toString();
-                }
-                text.append(c);
-                node = root;
+        HuffmanDecoder decoder = new HuffmanDecoder(tree, data);
+        String[] texts = new String[offsets.length];
+        IntStream.range(0, offsets.length).parallel().forEach(i -> {
+            StringBuilder text = new StringBuilder();
+            if (decoder.decode(offsets[i], text)) {
+                texts[i] = text.toString();
             }
+        });
+        for (int i = 0; i < offsets.length; i++) {
+            if (texts[i] == null) {
+                throw new IOException("Corrupt TLK data (the string at bit offset " + offsets[i]
+                        + " has no terminator): " + fileName);
+            }
+            textByOffset.put(offsets[i], texts[i]);
         }
-        throw new IOException("Corrupt TLK data (the string at bit offset " + bitOffset
-                + " has no terminator): " + fileName);
+        return textByOffset;
     }
 
     /**
