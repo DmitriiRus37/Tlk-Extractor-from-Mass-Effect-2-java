@@ -78,6 +78,8 @@ final class XmlFormat {
     private static final class XmlWriter implements FormatWriter {
         /** Destination. */
         private final Writer out;
+        /** One {@code <string>} element, built here and written with a single call. */
+        private final StringBuilder element = new StringBuilder();
 
         /**
          * Creates the writer.
@@ -120,21 +122,24 @@ final class XmlFormat {
         @Override
         public void entry(TlkFile.TlkStringRef ref) throws IOException {
             boolean hasText = ref.data != null;
-            out.write(INDENT + "<" + STRING + ">\n");
-            out.write(INDENT + INDENT + "<" + ID + ">" + ref.stringId + "</" + ID + ">\n");
-            out.write(INDENT + INDENT + "<" + POSITION + ">" + ref.position + "</" + POSITION + ">\n");
-            out.write(INDENT + INDENT + "<" + DATA);
+            StringBuilder e = element;
+            e.setLength(0);
+            e.append(INDENT + "<" + STRING + ">\n");
+            e.append(INDENT + INDENT + "<" + ID + ">").append(ref.stringId).append("</" + ID + ">\n");
+            e.append(INDENT + INDENT + "<" + POSITION + ">").append(ref.position).append("</" + POSITION + ">\n");
+            e.append(INDENT + INDENT + "<" + DATA);
             if (hasText != (ref.stringId >= 0)) {
-                out.write(" " + HAS_TEXT + "=\"" + hasText + "\"");
+                e.append(" " + HAS_TEXT + "=\"").append(hasText).append('"');
             }
-            out.write(">");
+            e.append('>');
             if (hasText) {
-                writeEscaped(ref);
+                appendEscaped(ref, e);
             } else {
-                out.write(NO_TEXT);
+                e.append(NO_TEXT);
             }
-            out.write("</" + DATA + ">\n");
-            out.write(INDENT + "</" + STRING + ">\n");
+            e.append("</" + DATA + ">\n");
+            e.append(INDENT + "</" + STRING + ">\n");
+            out.append(e);
         }
 
         /**
@@ -148,16 +153,17 @@ final class XmlFormat {
         }
 
         /**
-         * Writes the text of an entry as XML character data: {@code &}, {@code <} and {@code >}
+         * Appends the text of an entry as XML character data: {@code &}, {@code <} and {@code >}
          * become entity references, a carriage return becomes {@code &#13;}, everything else is
          * written as is.
          *
          * @param ref the entry whose {@link TlkFile.TlkStringRef#data} to write
-         * @throws IOException if writing fails or the text contains a character XML 1.0 does not
-         *                     allow (a control character other than tab, line feed and carriage
-         *                     return, an unpaired surrogate, {@code U+FFFE} or {@code U+FFFF})
+         * @param out where to append it
+         * @throws IOException if the text contains a character XML 1.0 does not allow (a control
+         *                     character other than tab, line feed and carriage return, an unpaired
+         *                     surrogate, {@code U+FFFE} or {@code U+FFFF})
          */
-        private void writeEscaped(TlkFile.TlkStringRef ref) throws IOException {
+        private static void appendEscaped(TlkFile.TlkStringRef ref, StringBuilder out) throws IOException {
             String text = ref.data;
             int start = 0;
             for (int i = 0; i < text.length(); i++) {
@@ -182,11 +188,10 @@ final class XmlFormat {
                             + ") cannot be written as XML: it contains the character U+"
                             + String.format("%04X", (int) c) + ", which XML 1.0 does not allow");
                 }
-                out.write(text, start, i - start);
-                out.write(replacement);
+                out.append(text, start, i).append(replacement);
                 start = i + 1;
             }
-            out.write(text, start, text.length() - start);
+            out.append(text, start, text.length());
         }
     }
 
