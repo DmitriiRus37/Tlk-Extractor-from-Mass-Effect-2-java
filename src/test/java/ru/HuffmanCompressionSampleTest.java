@@ -13,6 +13,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -52,8 +53,7 @@ class HuffmanCompressionSampleTest {
         for (int i = 0; i < entries.size(); i++) {
             HuffmanAccess.Entry e = entries.get(i);
             TlkFile.TlkStringRef r = refs.get(i);
-            String expected = r.data == null ? "-1" : r.data + '\0';
-            if (e.id != r.stringId || !expected.equals(e.data)) {
+            if (e.id != r.stringId || !(r.data == null ? e.data == null : r.data.equals(e.data))) {
                 fail("mismatch at position " + i + ": " + e.id + " / " + e.data);
             }
         }
@@ -95,9 +95,9 @@ class HuffmanCompressionSampleTest {
         HuffmanCompression debug = new HuffmanCompression();
         debug.loadInputData(SampleFixture.xml().toString(), FileFormat.XML, true);
         List<HuffmanAccess.Entry> entries = HuffmanAccess.entries(debug);
-        assertEquals("(#218733) Капитан Бейли\0", entries.get(1000).data);
-        assertEquals("Male\0", entries.get(SampleFixture.MALE_COUNT - 1).data);
-        assertEquals("-1", entries.get(315).data);
+        assertEquals("(#218733) Капитан Бейли", entries.get(1000).data);
+        assertEquals("Male", entries.get(SampleFixture.MALE_COUNT - 1).data);
+        assertNull(entries.get(315).data);
         // the prefix characters are now part of the alphabet
         assertTrue(HuffmanAccess.codes(debug).containsKey('#'));
     }

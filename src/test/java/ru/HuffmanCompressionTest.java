@@ -6,8 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.xml.sax.SAXException;
-
+import javax.xml.stream.XMLStreamException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,7 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -87,6 +88,13 @@ class HuffmanCompressionTest {
         return t;
     }
 
+    /** Asserts that loading fails with an IOException whose message contains {@code text}. */
+    private static IOException assertLoadFails(Path xml, String text) {
+        IOException e = assertThrows(IOException.class, () -> load(xml));
+        assertTrue(e.getMessage().contains(text), e.getMessage());
+        return e;
+    }
+
     private static List<String> texts(TlkFile t) {
         return TlkFileTest.texts(t);
     }
@@ -110,23 +118,23 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        void terminatesTextAndKeepsOffsetOfEntriesWithoutText() throws Exception {
+        void keepsTheTextAndMarksEntriesWithoutText() throws Exception {
             assertEquals(Arrays.asList(
-                    "Hello\0",
-                    CYRILLIC + "\0",
-                    "-1",
-                    "Male\0",
-                    "\0",
-                    "Line one\nLine two\t(tab)\0",
-                    "Hello, <Shepard> & co.\0",
-                    "Female\0"), data(load(small())));
+                    "Hello",
+                    CYRILLIC,
+                    null,
+                    "Male",
+                    "",
+                    "Line one\nLine two\t(tab)",
+                    "Hello, <Shepard> & co.",
+                    "Female"), data(load(small())));
         }
 
         @Test
         void sortsEntriesByPosition() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4",
                     entry(30, 3, "d"), entry(10, 1, "b"), entry(40, 0, "a"), entry(20, 2, "c")));
-            assertEquals(Arrays.asList("a\0", "b\0", "c\0", "d\0"), data(hc));
+            assertEquals(Arrays.asList("a", "b", "c", "d"), data(hc));
             assertEquals(40, HuffmanAccess.entries(hc).get(0).id);
         }
 
@@ -137,7 +145,7 @@ class HuffmanCompressionTest {
                 assertEquals(0, e.id);
                 assertEquals(0, e.position);
             }
-            assertEquals(new HashSet<>(Arrays.asList("x\0", "\0")), new HashSet<>(data(hc)));
+            assertEquals(new HashSet<>(Arrays.asList("x", "")), new HashSet<>(data(hc)));
         }
 
         @Test
@@ -145,49 +153,49 @@ class HuffmanCompressionTest {
             HuffmanCompression hc = load(xml("1.0.4",
                     "<string><id>1</id><comment>ignored</comment><position>0</position><data>x</data></string>",
                     "<other><id>2</id></other>"));
-            assertEquals(Collections.singletonList("x\0"), data(hc));
+            assertEquals(Collections.singletonList("x"), data(hc));
         }
 
         @Test
         void replacesCrLfButKeepsLoneCrAndLf() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, "a&#13;&#10;b&#13;c&#10;d")));
-            assertEquals(Collections.singletonList("a\nb\rc\nd\0"), data(hc));
+            assertEquals(Collections.singletonList("a\nb\rc\nd"), data(hc));
         }
 
         @Test
         void unicodeText() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, CYRILLIC), entry(2, 1, EMOJI), entry(3, 2, "中文 &#xFFFD;")));
-            assertEquals(Arrays.asList(CYRILLIC + "\0", EMOJI + "\0", "中文 \ufffd\0"), data(hc));
+            assertEquals(Arrays.asList(CYRILLIC, EMOJI, "中文 \ufffd"), data(hc));
         }
 
         @Test
         void debugVersionPrefixesLocalizableIds() throws Exception {
             HuffmanCompression hc = load(small(), true);
             List<String> data = data(hc);
-            assertEquals("(#100) Hello\0", data.get(0));
-            assertEquals("(#101) " + CYRILLIC + "\0", data.get(1));
-            assertEquals("-1", data.get(2));                 // negative id: no text
-            assertEquals("Male\0", data.get(3));             // 0x08000003: bit 27 set, not localizable
-            assertEquals("(#102) \0", data.get(4));          // empty text is prefixed too
-            assertEquals("Female\0", data.get(7));
+            assertEquals("(#100) Hello", data.get(0));
+            assertEquals("(#101) " + CYRILLIC, data.get(1));
+            assertNull(data.get(2));                         // negative id: no text
+            assertEquals("Male", data.get(3));               // 0x08000003: bit 27 set, not localizable
+            assertEquals("(#102) ", data.get(4));            // empty text is prefixed too
+            assertEquals("Female", data.get(7));
         }
 
         @Test
         void debugPrefixForIdZero() throws Exception {
-            assertEquals(Collections.singletonList("(#0) zero\0"), data(load(xml("1.0.4", entry(0, 0, "zero")), true)));
+            assertEquals(Collections.singletonList("(#0) zero"), data(load(xml("1.0.4", entry(0, 0, "zero")), true)));
         }
 
         @Test
         void loadingAgainReplacesTheEntries() throws Exception {
             HuffmanCompression hc = load(small());
             hc.loadInputData(xml("1.0.4", entry(1, 0, "ab")).toString(), FileFormat.XML, false);
-            assertEquals(Collections.singletonList("ab\0"), data(hc));
+            assertEquals(Collections.singletonList("ab"), data(hc));
         }
 
         @Test
         void duplicateIdsAreAllKept() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4", entry(5, 0, "he"), entry(5, 1, "she")));
-            assertEquals(Arrays.asList("he\0", "she\0"), data(hc));
+            assertEquals(Arrays.asList("he", "she"), data(hc));
             assertEquals(Integer.valueOf(2), HuffmanAccess.frequencies(hc).get('h'));
         }
 
@@ -200,33 +208,73 @@ class HuffmanCompressionTest {
         @ParameterizedTest
         @ValueSource(strings = {"1.0.2", "1.0", "1", "0.9.9", "1.0.2.9", "0"})
         void rejectsToolVersionsBefore103(String version) throws IOException {
-            Path file = xml(version, entry(1, 0, "x"));
-            assertThrows(RuntimeException.class, () -> load(file));
+            assertLoadFails(xml(version, entry(1, 0, "x")), "version " + version + ";");
         }
 
         @Test
         void rejectsOldVersionResource() {
-            assertThrows(RuntimeException.class, () -> load(TestSupport.resource("/xml/old-version.xml")));
+            assertLoadFails(TestSupport.resource("/xml/old-version.xml"), "before 1.0.3");
         }
 
         @Test
         void rejectsNonNumericVersion() throws IOException {
-            Path file = xml("1.0.beta", entry(1, 0, "x"));
-            assertThrows(NumberFormatException.class, () -> load(file));
+            IOException e = assertLoadFails(xml("1.0.beta", entry(1, 0, "x")), "Invalid TLKToolVersion \"1.0.beta\"");
+            assertInstanceOf(NumberFormatException.class, e.getCause());
         }
 
         @Test
         void rejectsNonNumericIdAndPosition() throws IOException {
-            Path badId = xml("1.0.4", "<string><id>abc</id><position>0</position><data>x</data></string>");
-            assertThrows(NumberFormatException.class, () -> load(badId));
-            Path badPosition = xml("1.0.4", "<string><id>1</id><position></position><data>x</data></string>");
-            assertThrows(NumberFormatException.class, () -> load(badPosition));
+            assertLoadFails(xml("1.0.4", "<string><id>abc</id><position>0</position><data>x</data></string>"),
+                    "Invalid <id> \"abc\"");
+            assertLoadFails(xml("1.0.4", "<string><id>1</id><position></position><data>x</data></string>"),
+                    "Invalid <position> \"\"");
+        }
+
+        @Test
+        void idAndPositionMayBeSurroundedByWhitespace() throws Exception {
+            HuffmanCompression hc = load(xml("1.0.4", "<string><id> 7 </id><position>\n3\n</position><data>x</data></string>"));
+            assertEquals(7, HuffmanAccess.entries(hc).get(0).id);
+            assertEquals(3, HuffmanAccess.entries(hc).get(0).position);
         }
 
         @Test
         void rejectsMalformedXml() throws IOException {
             Path file = TestSupport.writeUtf8(dir.resolve("broken.xml"), "<tlkFile TLKToolVersion=\"1.0.4\"><string>");
-            assertThrows(SAXException.class, () -> load(file));
+            IOException e = assertLoadFails(file, "Malformed XML in " + file);
+            assertInstanceOf(XMLStreamException.class, e.getCause());
+        }
+
+        @Test
+        void rejectsAnotherRootElement() throws IOException {
+            Path file = TestSupport.writeUtf8(dir.resolve("other.xml"), "<strings TLKToolVersion=\"1.0.4\"/>");
+            assertLoadFails(file, "root element <strings>");
+        }
+
+        @Test
+        void doesNotResolveExternalEntities() throws IOException {
+            Path secret = TestSupport.writeUtf8(dir.resolve("secret.txt"), "secret");
+            Path file = TestSupport.writeUtf8(dir.resolve("xxe.xml"), "<?xml version=\"1.0\"?>\n"
+                    + "<!DOCTYPE tlkFile [<!ENTITY x SYSTEM \"" + secret.toUri() + "\">]>\n"
+                    + "<tlkFile TLKToolVersion=\"1.0.4\">" + entry(1, 0, "&x;") + "</tlkFile>");
+            assertThrows(IOException.class, () -> load(file));
+        }
+
+        @Test
+        void entryWithoutTextMustHoldANegativeNumber() throws Exception {
+            assertLoadFails(xml("1.0.4", entry(1, 0, "a"), entry(-2, 1, "not a number")), "Invalid <data> \"not a number\"");
+            assertLoadFails(xml("1.0.4", entry(-2, 0, "5")), "must be -1");
+            assertEquals(Collections.singletonList(null), data(load(xml("1.0.4", entry(-2, 0, " -3 ")))));
+        }
+
+        @Test
+        void failedLoadLeavesTheInstanceEmpty() throws Exception {
+            HuffmanCompression hc = load(small());
+            Path bad = xml("1.0.4", entry(1, 0, "a"), entry(2, 1, "b"), "<string><id>x</id></string>");
+            assertThrows(IOException.class, () -> hc.loadInputData(bad.toString(), FileFormat.XML, false));
+            assertTrue(HuffmanAccess.entries(hc).isEmpty());
+            assertTrue(HuffmanAccess.codes(hc).isEmpty());
+            assertTrue(HuffmanAccess.frequencies(hc).isEmpty());
+            assertEquals("1.0.0.0", HuffmanAccess.version(hc));
         }
 
         @Test
@@ -235,15 +283,11 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        @Disabled("Known bug: a missing TLKToolVersion attribute causes a NullPointerException "
-                + "instead of being treated as the oldest version (1.0.0.0) and rejected")
         void missingToolVersionIsRejectedAsTooOld() {
-            Exception e = assertThrows(Exception.class, () -> load(TestSupport.resource("/xml/no-version.xml")));
-            assertFalse(e instanceof NullPointerException, "NullPointerException instead of a version error");
+            assertLoadFails(TestSupport.resource("/xml/no-version.xml"), "version 1.0.0.0 (it has no TLKToolVersion attribute)");
         }
 
         @Test
-        @Disabled("Known bug: an XML without any string makes loadInputData throw IndexOutOfBoundsException")
         void emptyStringListCanBeLoaded() throws Exception {
             HuffmanCompression hc = new HuffmanCompression();
             assertDoesNotThrow(() -> hc.loadInputData(TestSupport.resource("/xml/empty.xml").toString(), FileFormat.XML, false));
@@ -251,13 +295,13 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        @Disabled("Known bug: an XML whose strings all lack text (negative ids) makes loadInputData throw "
-                + "IndexOutOfBoundsException")
         void onlyEntriesWithoutTextCanBeLoaded() throws Exception {
             Path file = xml("1.0.4", entry(-1, 0, "-1"), entry(-2, 1, "-1"));
             HuffmanCompression hc = new HuffmanCompression();
             assertDoesNotThrow(() -> hc.loadInputData(file.toString(), FileFormat.XML, false));
             assertEquals(2, HuffmanAccess.entries(hc).size());
+            assertTrue(HuffmanAccess.codes(hc).isEmpty());
+            assertTrue(HuffmanAccess.treeBuffer(hc).isEmpty());
         }
     }
 
@@ -274,6 +318,15 @@ class HuffmanCompressionTest {
             expected.put('b', 3);
             expected.put('\0', 2);
             assertEquals(expected, HuffmanAccess.frequencies(hc));
+        }
+
+        @Test
+        void treeIsDeterministic() throws Exception {
+            Path xml = xml("1.0.4", entry(1, 0, "abcdefgh abcd ab"), entry(2, 1, EMOJI + CYRILLIC));
+            List<Integer> tree = HuffmanAccess.treeBuffer(load(xml));
+            for (int i = 0; i < 5; i++) {
+                assertEquals(tree, HuffmanAccess.treeBuffer(load(xml)));
+            }
         }
 
         @Test
@@ -343,19 +396,15 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        @Disabled("Bug: with a single distinct character (e.g. only empty strings) the code is empty and "
-                + "the tree has no node, so nothing can be encoded or decoded")
         void singleDistinctCharacterGetsANonEmptyCode() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, ""), entry(2, 1, "")));
             assertEquals(1, HuffmanAccess.codes(hc).size());
             assertTrue(HuffmanAccess.codes(hc).get('\0').length() >= 1, "empty code for '\\0'");
-            assertFalse(HuffmanAccess.treeBuffer(hc).isEmpty(), "tree without nodes");
+            assertEquals(Arrays.asList(-1, -1), HuffmanAccess.treeBuffer(hc));
             assertEquals(Arrays.asList("", ""), texts(roundTrip(hc)));
         }
 
         @Test
-        @Disabled("Bug: loadInputData does not clear the previous Huffman tree and codes, so reusing an "
-                + "instance mixes the old characters into the new code")
         void reusingAnInstanceDoesNotMixTrees() throws Exception {
             HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, "abcdef")));
             hc.loadInputData(xml("1.0.4", entry(1, 0, "xx")).toString(), FileFormat.XML, false);
@@ -417,8 +466,8 @@ class HuffmanCompressionTest {
             List<BitArray> stream = new ArrayList<>();
             int count = 0;
             for (HuffmanAccess.Entry e : HuffmanAccess.entries(hc)) {
-                if (e.id >= 0) {
-                    for (char c : e.data.toCharArray()) {
+                if (e.data != null) {
+                    for (char c : (e.data + '\0').toCharArray()) {
                         BitArray code = HuffmanAccess.codes(hc).get(c);
                         stream.add(code);
                         count += code.length();
@@ -435,7 +484,7 @@ class HuffmanCompressionTest {
     class VersionComparison {
 
         @Test
-        void lessThan() throws Exception {
+        void lessThan() {
             assertTrue(HuffmanAccess.compareVersions("1.0.2", "1.0.3", "<"));
             assertTrue(HuffmanAccess.compareVersions("1.0", "1.0.3", "<"));
             assertTrue(HuffmanAccess.compareVersions("0.99", "1", "<"));
@@ -445,7 +494,7 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        void greaterThan() throws Exception {
+        void greaterThan() {
             assertTrue(HuffmanAccess.compareVersions("1.0.10", "1.0.9", ">"));
             assertTrue(HuffmanAccess.compareVersions("1.1", "1.0.9", ">"));
             assertFalse(HuffmanAccess.compareVersions("1.0.3", "1.0.3.0", ">"));
@@ -453,18 +502,11 @@ class HuffmanCompressionTest {
         }
 
         @Test
-        void equalTreatsMissingComponentsAsZero() throws Exception {
+        void equalTreatsMissingComponentsAsZero() {
             assertTrue(HuffmanAccess.compareVersions("1.0.3", "1.0.3.0", "="));
             assertTrue(HuffmanAccess.compareVersions("1", "1.0.0", "="));
             assertFalse(HuffmanAccess.compareVersions("1.0.3", "1.0.4", "="));
             assertFalse(HuffmanAccess.compareVersions("1.0.4", "1.0.3", "="));
-        }
-
-        @Test
-        void invalidSignIsRejected() {
-            RuntimeException e = assertThrows(RuntimeException.class,
-                    () -> HuffmanAccess.compareVersions("1", "2", "<="));
-            assertTrue(e.getMessage().contains("valid sign"));
         }
 
         @Test
@@ -562,13 +604,6 @@ class HuffmanCompressionTest {
             assertEquals(2, TlkFileTest.header(t).entry1Count);
             assertEquals(1, TlkFileTest.header(t).entry2Count);
             assertEquals(Arrays.asList(null, "a", null), texts(t));
-        }
-
-        @Test
-        void entryWithoutTextMustHoldANumericOffset() throws Exception {
-            HuffmanCompression hc = load(xml("1.0.4", entry(1, 0, "a"), entry(-2, 1, "not a number")));
-            String out = dir.resolve("bad.tlk").toString();
-            assertThrows(NumberFormatException.class, () -> hc.saveToTlkFile(out, true));
         }
 
         @Test

@@ -22,6 +22,7 @@ final class HuffmanAccess {
     static final class Entry {
         final int id;
         final int position;
+        /** Text without terminator, or null for an entry without text. */
         final String data;
 
         Entry(int id, int position, String data) {
@@ -38,7 +39,7 @@ final class HuffmanAccess {
         List<Object> raw = TestSupport.field(hc, "inputData");
         List<Entry> result = new ArrayList<>();
         for (Object o : raw) {
-            Integer id = TestSupport.field(o, "stringID");
+            Integer id = TestSupport.field(o, "stringId");
             Integer position = TestSupport.field(o, "position");
             String data = TestSupport.field(o, "data");
             result.add(new Entry(id, position, data));
@@ -59,17 +60,32 @@ final class HuffmanAccess {
     }
 
     static List<Integer> treeBuffer(HuffmanCompression hc) throws Exception {
-        return TestSupport.call(hc, "ConvertHuffmanTreeToBuffer", TestSupport.types());
+        int[] buffer = TestSupport.call(hc, "treeToBuffer", TestSupport.types());
+        List<Integer> result = new ArrayList<>();
+        for (int v : buffer) {
+            result.add(v);
+        }
+        return result;
     }
 
     static byte[] pack(List<BitArray> bits, int bitCount) throws Exception {
-        return TestSupport.callStatic(HuffmanCompression.class, "BitArrayListToByteArray",
+        return TestSupport.callStatic(HuffmanCompression.class, "bitArrayListToByteArray",
                 TestSupport.types(List.class, int.class), bits, bitCount);
     }
 
-    static boolean compareVersions(String v1, String v2, String sign) throws Exception {
-        return TestSupport.<Boolean>callStatic(HuffmanCompression.class, "compareVersionStrings",
-                TestSupport.types(String.class, String.class, String.class), v1, v2, sign);
+    /** Evaluates {@code v1 sign v2} with {@link HuffmanCompression#compareVersions(String, String)}. */
+    static boolean compareVersions(String v1, String v2, String sign) {
+        int c = HuffmanCompression.compareVersions(v1, v2);
+        switch (sign) {
+            case "<":
+                return c < 0;
+            case ">":
+                return c > 0;
+            case "=":
+                return c == 0;
+            default:
+                throw new IllegalArgumentException(sign);
+        }
     }
 
     static String codeString(BitArray code) {
@@ -167,35 +183,30 @@ final class HuffmanAccess {
     }
 
     private static void add(TlkTestFile file, Entry e, boolean male) {
-        if (e.id < 0) {
-            int offset = Integer.parseInt(e.data);
+        if (e.data == null) {
             if (male) {
-                file.maleRaw(e.id, offset);
+                file.maleRaw(e.id, -1);
             } else {
-                file.femaleRaw(e.id, offset);
+                file.femaleRaw(e.id, -1);
             }
-            return;
-        }
-        assertTrue(e.data.endsWith("\0"), "entry " + e.id + " is not NUL-terminated");
-        String text = e.data.substring(0, e.data.length() - 1);
-        if (male) {
-            file.male(e.id, text);
+        } else if (male) {
+            file.male(e.id, e.data);
         } else {
-            file.female(e.id, text);
+            file.female(e.id, e.data);
         }
     }
 
     /**
      * The data block {@code saveToTlkFile} should write: the codes of all characters of all
-     * entries with a non-negative id, in position order, packed LSB first (computed
+     * entries with text plus their terminators, in position order, packed LSB first (computed
      * independently of the production packing code).
      */
     static byte[] expectedDataBlock(HuffmanCompression hc) {
         Map<Character, BitArray> codes = codes(hc);
         StringBuilder bits = new StringBuilder();
         for (Entry e : entries(hc)) {
-            if (e.id >= 0) {
-                for (char c : e.data.toCharArray()) {
+            if (e.data != null) {
+                for (char c : (e.data + '\0').toCharArray()) {
                     bits.append(codeString(codes.get(c)));
                 }
             }

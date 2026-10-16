@@ -37,9 +37,9 @@
  * <ol>
  *   <li>{@link ru.HuffmanCompression#loadInputData(String, ru.FileFormat, boolean)} parses the
  *       XML (rejecting files written by tool versions before 1.0.3), sorts the entries by
- *       {@code <position>}, NUL-terminates the strings and builds a new Huffman tree and code
- *       table from their character frequencies. With the debug flag, which the GUI always sets,
- *       each localizable string is prefixed with {@code "(#<id>) "}.</li>
+ *       {@code <position>} and builds a new Huffman tree and code table from the character
+ *       frequencies of the texts. With the debug flag, which the GUI always sets, each
+ *       localizable string is prefixed with {@code "(#<id>) "}.</li>
  *   <li>{@link ru.HuffmanCompression#saveToTlkFile(String, boolean)} encodes the strings into one
  *       bit stream and writes header, string refs, tree and data. This step is known to be
  *       incomplete: see the notes on that method.</li>

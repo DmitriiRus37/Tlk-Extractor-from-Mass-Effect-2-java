@@ -8,9 +8,7 @@ import javafx.stage.FileChooser;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.io.FilenameUtils;
-import org.xml.sax.SAXException;
 
-import javax.xml.parsers.ParserConfigurationException;
 import java.io.File;
 import java.io.IOException;
 
@@ -216,13 +214,11 @@ public class FxmlController {
      * prefixed with {@code "(#<id>) "} (see
      * {@link HuffmanCompression#loadInputData(String, FileFormat, boolean)}).
      *
-     * @throws IOException                  if the XML file cannot be read or the TLK file
-     *                                      cannot be written
-     * @throws ParserConfigurationException if no XML parser can be created
-     * @throws SAXException                 if the XML file is not well-formed
+     * @throws IOException if the XML file cannot be read or is invalid, or the TLK file cannot be
+     *                     written
      */
     @FXML
-    private void startExportXmlToTlk() throws IOException, ParserConfigurationException, SAXException {
+    private void startExportXmlToTlk() throws IOException {
         statusXmlToTlk.setText("in progress");
         progressBarXmlToTlk.setProgress(0.0);
         HuffmanCompression hc = new HuffmanCompression();
