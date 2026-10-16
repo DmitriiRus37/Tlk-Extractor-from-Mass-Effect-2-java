@@ -1,6 +1,5 @@
 package ru;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -136,18 +135,6 @@ class BitArrayTest {
         }
 
         @Test
-        void getBitCountsFromEitherEndOfAnUnpackedByte() throws Exception {
-            // private helper behind getRev: byteImpl[0] is the 0x80 bit
-            BitArray ba = new BitArray(8);
-            boolean[] onlyMsb = {true, false, false, false, false, false, false, false};
-            Class<?>[] types = TestSupport.types(boolean[].class, int.class, Endian.class);
-            assertTrue(TestSupport.<Boolean>call(ba, "getBit", types, onlyMsb, 0, Endian.BigEndian));
-            assertFalse(TestSupport.<Boolean>call(ba, "getBit", types, onlyMsb, 0, Endian.LittleEndian));
-            assertTrue(TestSupport.<Boolean>call(ba, "getBit", types, onlyMsb, 15, Endian.LittleEndian));
-            assertTrue(TestSupport.<Boolean>call(ba, "getBit", types, onlyMsb, 8, Endian.BigEndian));
-        }
-
-        @Test
         void setWritesMsbFirstAndCanClear() {
             BitArray ba = new BitArray(16);
             ba.set(0, true);
@@ -261,7 +248,6 @@ class BitArrayTest {
         }
 
         @Test
-        @Disabled("Known bug: BitArray.toString() throws on a zero-length array")
         void emptyArrayPrintsEmptyString() {
             assertEquals("", new BitArray(0).toString());
         }
@@ -271,15 +257,22 @@ class BitArrayTest {
     class Truncate {
 
         @Test
-        void keepsWholeBytesUpToLastSetBit() {
+        void keepsBitsUpToLastSetBit() {
             BitArray ba = new BitArray(32);
             ba.set(3, true);
             ba.set(10, true);
             BitArray t = ba.truncate();
-            assertEquals(16, t.length());
-            assertTrue(t.get(3));
-            assertTrue(t.get(10));
-            assertFalse(t.get(15));
+            assertEquals(11, t.length());
+            for (int i = 0; i < 11; i++) {
+                assertEquals(i == 3 || i == 10, t.get(i), "bit " + i);
+            }
+        }
+
+        @Test
+        void lastSetBitInsideAByte() {
+            BitArray t = new BitArray(bytes(0xa0, 0x00)).truncate();
+            assertEquals(bits("101"), t);
+            assertArrayEquals(bytes(0xa0), t.toByteArray());
         }
 
         @Test

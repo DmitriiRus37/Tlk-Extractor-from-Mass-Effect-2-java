@@ -49,8 +49,8 @@
  * <h2>Classes</h2>
  * {@code App} starts the JavaFX application and {@code FxmlController} handles the UI defined in
  * {@code app.fxml}; both are left out of builds on a JDK 8 without JavaFX, so they are not linked
- * from here. {@link ru.BitArray}, {@link ru.BitConverter}, {@link ru.PositionInputStream} and
- * {@link ru.Endian} are helpers that stand in for the .NET classes the C# original relied on;
+ * from here. {@link ru.BitArray} holds the compressed bits; {@link ru.BitConverter} and
+ * {@link ru.PositionInputStream} are stand-ins for the .NET classes the C# original relied on.
  * {@link ru.FileFormat} lists the export formats.
  */
 package ru;

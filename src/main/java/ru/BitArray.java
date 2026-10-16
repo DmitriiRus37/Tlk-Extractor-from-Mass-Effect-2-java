@@ -1,4 +1,4 @@
-package ru;/*
+/*
  * Copyright (c) 1997, 2006, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -23,9 +23,10 @@ package ru;/*
  * questions.
  */
 
+package ru;
+
 import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
-import java.util.stream.IntStream;
 
 /**
  * A fixed-length packed array of booleans, adapted from the JDK-internal
@@ -45,7 +46,6 @@ import java.util.stream.IntStream;
  * @author Joshua Bloch
  * @author Douglas Hoover
  */
-
 public class BitArray {
 
     /**
@@ -80,49 +80,40 @@ public class BitArray {
     }
 
     /**
+     * Returns the number of bytes needed to store a number of bits.
+     *
+     * @param bits number of bits, not negative
+     * @return {@code ceil(bits / 8)}
+     */
+    private static int bytesFor(int bits) {
+        return (int) ((bits + (long) BITS_PER_UNIT - 1) / BITS_PER_UNIT);
+    }
+
+    /**
      * Creates a {@code BitArray} of the specified size, initialized to zeros.
      *
      * @param length number of bits
      * @throws IllegalArgumentException if {@code length} is negative
      */
-    public BitArray(int length) throws IllegalArgumentException {
+    public BitArray(int length) {
         if (length < 0) {
-            throw new IllegalArgumentException("Negative length for BitArray");
+            throw new IllegalArgumentException("Negative length for BitArray: " + length);
         }
         this.length = length;
-        repn = new byte[(length + BITS_PER_UNIT - 1)/BITS_PER_UNIT];
+        repn = new byte[bytesFor(length)];
     }
-
 
     /**
      * Creates a {@code BitArray} of {@code 8 * a.length} bits holding a copy of {@code a}. The
      * most significant bit of {@code a[0]} gets index zero for {@link #get(int)}; for
      * {@link #getRev(int)} index zero is the least significant bit of {@code a[0]}.
      *
-     * <p>The masking of unused bits in the last byte is a leftover of the original two-argument
-     * {@code BitArray(int, byte[])} constructor and has no effect here, since the length is always
-     * a multiple of 8.
-     *
      * @param a the bytes to copy
-     * @throws IllegalArgumentException never thrown by this constructor; declared for
-     *                                  compatibility with the original
+     * @throws NullPointerException if {@code a} is {@code null}
      */
-    public BitArray(byte[] a) throws IllegalArgumentException {
-        length = a.length * BITS_PER_UNIT;
-        int repLength = (length + BITS_PER_UNIT - 1) / BITS_PER_UNIT;
-        int unusedBits = repLength * BITS_PER_UNIT - length;
-        byte bitMask = (byte) (0xFF << unusedBits);
-
-        /*
-         normalize the representation:
-          1. discard extra bytes
-          2. zero out extra bits in the last byte
-         */
-        repn = new byte[repLength];
-        System.arraycopy(a, 0, repn, 0, repLength);
-        if (repLength > 0) {
-            repn[repLength - 1] &= bitMask;
-        }
+    public BitArray(byte[] a) {
+        repn = a.clone();
+        length = repn.length * BITS_PER_UNIT;
     }
 
     /**
@@ -132,14 +123,13 @@ public class BitArray {
      * @param bits the bit values; its length becomes the length of this array
      */
     public BitArray(boolean[] bits) {
-        length = bits.length;
-        repn = new byte[(length + 7)/8];
-
-        for (int i=0; i < length; i++) {
-            set(i, bits[i]);
+        this(bits.length);
+        for (int i = 0; i < length; i++) {
+            if (bits[i]) {
+                set(i, true);
+            }
         }
     }
-
 
     /**
      *  Copy constructor (for cloning).
@@ -152,16 +142,26 @@ public class BitArray {
     }
 
     /**
+     * Throws if a bit index is out of range.
+     *
+     * @param index bit index to check
+     * @throws ArrayIndexOutOfBoundsException unless {@code 0 <= index < length()}
+     */
+    private void checkIndex(int index) {
+        if (index < 0 || index >= length) {
+            throw new ArrayIndexOutOfBoundsException("Bit index " + index + " out of range for length " + length);
+        }
+    }
+
+    /**
      *  Returns the indexed bit in this BitArray, counting MSB-first within each byte.
      *
      * @param index bit index, {@code 0 <= index < length()}
      * @return the bit value
      * @throws ArrayIndexOutOfBoundsException if {@code index} is out of range
      */
-    public boolean get(int index) throws ArrayIndexOutOfBoundsException {
-        if (index < 0 || index >= length) {
-            throw new ArrayIndexOutOfBoundsException(String.valueOf(index));
-        }
+    public boolean get(int index) {
+        checkIndex(index);
         return (repn[subscript(index)] & positionBigEndian(index)) != 0;
     }
 
@@ -171,37 +171,13 @@ public class BitArray {
      * bit, index 8 the {@code 0x01} bit of byte 1, and so on. This matches .NET's
      * {@code BitArray} indexing, which is how TLK files lay out their compressed data.
      *
-     * <p>Unpacks the whole containing byte into a temporary {@code boolean[8]} on every call.
-     *
      * @param index bit index, {@code 0 <= index < length()}
      * @return the bit value
      * @throws ArrayIndexOutOfBoundsException if {@code index} is out of range
      */
-    public boolean getRev(int index) throws ArrayIndexOutOfBoundsException {
-        if (index < 0 || index >= length) {
-            throw new ArrayIndexOutOfBoundsException(String.valueOf(index));
-        }
-        boolean[] bitArray = new boolean[Byte.SIZE];
-        for (int i = 0; i<Byte.SIZE; i++) {
-            bitArray[Byte.SIZE-1-i] = (repn[subscript(index)] >> i & 0x1) != 0x0;
-        }
-        return getBit(bitArray, index, Endian.LittleEndian);
-    }
-
-    /**
-     * Picks one bit out of an unpacked byte.
-     *
-     * @param byteImpl the 8 bits of a byte, most significant first ({@code byteImpl[0]} is the
-     *                 {@code 0x80} bit)
-     * @param index    bit index; only {@code index % 8} is used
-     * @param e        {@link Endian#BigEndian} to count from the most significant bit,
-     *                 {@link Endian#LittleEndian} to count from the least significant bit
-     * @return the selected bit
-     */
-    private boolean getBit(boolean[] byteImpl, int index, Endian e) {
-        return byteImpl[e.equals(Endian.BigEndian) ?
-                index % BITS_PER_UNIT :
-                Byte.SIZE - 1 - index % BITS_PER_UNIT];
+    public boolean getRev(int index) {
+        checkIndex(index);
+        return ((repn[subscript(index)] >> (index % BITS_PER_UNIT)) & 1) != 0;
     }
 
     /**
@@ -212,11 +188,8 @@ public class BitArray {
      * @param value the new bit value
      * @throws ArrayIndexOutOfBoundsException if {@code index} is out of range
      */
-    public void set(int index, boolean value)
-            throws ArrayIndexOutOfBoundsException {
-        if (index < 0 || index >= length) {
-            throw new ArrayIndexOutOfBoundsException(String.valueOf(index));
-        }
+    public void set(int index, boolean value) {
+        checkIndex(index);
         int idx = subscript(index);
         int bit = positionBigEndian(index);
         repn[idx] = value ? (byte) (repn[idx] | bit) : (byte) (repn[idx] & ~bit);
@@ -252,6 +225,7 @@ public class BitArray {
      * @param obj the object to compare with
      * @return {@code true} if {@code obj} is a {@code BitArray} with the same length and contents
      */
+    @Override
     public boolean equals(Object obj) {
         if (obj == this) {
             return true;
@@ -260,7 +234,7 @@ public class BitArray {
             return false;
         }
         BitArray ba = (BitArray) obj;
-        return (ba.length == length) && IntStream.range(0, repn.length).noneMatch(i -> repn[i] != ba.repn[i]);
+        return ba.length == length && Arrays.equals(repn, ba.repn);
     }
 
     /**
@@ -271,7 +245,7 @@ public class BitArray {
     public boolean[] toBooleanArray() {
         boolean[] bits = new boolean[length];
 
-        for (int i=0; i < length; i++) {
+        for (int i = 0; i < length; i++) {
             bits[i] = get(i);
         }
         return bits;
@@ -282,6 +256,7 @@ public class BitArray {
      *
      * @return  a hash code value for this bit array.
      */
+    @Override
     public int hashCode() {
         int hashCode = 0;
 
@@ -291,7 +266,6 @@ public class BitArray {
         return hashCode ^ length;
     }
 
-
     /**
      * Returns an independent copy of this array. The class does not implement
      * {@link Cloneable}; the copy is made with the private copy constructor, not
@@ -300,6 +274,7 @@ public class BitArray {
      * @return a new {@code BitArray} with the same length and bits
      */
     @Override
+    @SuppressWarnings({"CloneDoesntCallSuperClone", "MethodDoesntCallSuperMethod"})
     public Object clone() {
         return new BitArray(this);
     }
@@ -333,14 +308,16 @@ public class BitArray {
     /**
      *  Returns a String representation of this BitArray: the bits as {@code '0'}/{@code '1'}
      *  characters, MSB-first, in groups of 8 separated by a space, with a line break after every
-     *  8 groups. Only the valid bits of the last byte are printed.
-     *
-     *  <p>Note: throws {@link ArrayIndexOutOfBoundsException} for an empty (zero-length) array;
-     *  the JDK original returns {@code ""} in that case.
+     *  8 groups. Only the valid bits of the last byte are printed; an empty array prints as
+     *  {@code ""}.
      *
      * @return the textual bit dump
      */
+    @Override
     public String toString() {
+        if (length == 0) {
+            return "";
+        }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
 
         for (int i = 0; i < repn.length - 1; i++) {
@@ -357,19 +334,20 @@ public class BitArray {
     }
 
     /**
-     * Returns a copy shortened after the last set bit, rounded up to whole bytes.
+     * Returns a copy that ends with the last set bit, i.e. holds the first
+     * {@code lastSetBit + 1} bits of this array, like the JDK original.
      *
-     * <p>Note: unlike the JDK original, which keeps exactly {@code lastSetBit + 1} bits, the copy
-     * is built with {@link #BitArray(byte[])}, so its length is a multiple of 8 and zero bits
-     * after the last set bit within the same byte are kept. Not used in this project.
-     *
-     * @return the bytes up to and including the one holding the last {@code 1} bit, or a
-     *         one-bit array containing {@code 0} if no bit is set
+     * @return the bits up to and including the last {@code 1} bit, or a one-bit array containing
+     *         {@code 0} if no bit is set
      */
     public BitArray truncate() {
-        for (int i=length-1; i>=0; i--) {
+        for (int i = length - 1; i >= 0; i--) {
             if (get(i)) {
-                return new BitArray(Arrays.copyOf(repn, (i + BITS_PER_UNIT)/BITS_PER_UNIT));
+                BitArray copy = new BitArray(i + 1);
+                System.arraycopy(repn, 0, copy.repn, 0, copy.repn.length);
+                int unusedBits = copy.repn.length * BITS_PER_UNIT - copy.length;
+                copy.repn[copy.repn.length - 1] &= (byte) (0xFF << unusedBits);
+                return copy;
             }
         }
         return new BitArray(1);

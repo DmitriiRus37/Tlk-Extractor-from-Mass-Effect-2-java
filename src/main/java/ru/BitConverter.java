@@ -1,26 +1,27 @@
 package ru;
 
-import java.lang.Exception;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Partial Java port of .NET's {@code System.BitConverter}: converts primitives to and from byte
  * arrays.
  *
- * <p>Unlike .NET, which uses the machine's byte order (little-endian on PCs), most methods here
- * are big-endian: the {@code getBytes(short/int/long/float/double)} overloads emit the most
- * significant byte first, and {@code toChar}, {@code toInt16}, {@code toInt32}, {@code toInt64},
- * {@code toSingle} and {@code toDouble} read the first byte as the most significant one. The
- * exceptions are {@link #getBytes(char)} (little-endian), {@link #GetBytes(int)} (native order)
- * and {@link #toCharRev(byte[], int)} (little-endian).
+ * <p>Unlike .NET, which uses the machine's byte order (little-endian on PCs), the plain methods
+ * here are <em>big-endian</em>: the {@code getBytes(char/short/int/long/float/double)} overloads
+ * emit the most significant byte first, and {@code toChar}, {@code toInt16}, {@code toInt32},
+ * {@code toInt64}, {@code toSingle} and {@code toDouble} read the first byte as the most
+ * significant one, so each {@code to*} method is the inverse of the matching {@code getBytes}.
+ * {@link #getBytesLittleEndian(int)} and {@link #toCharLittleEndian(byte[], int)} are the
+ * little-endian variants (what .NET produces on a PC), independent of the platform's byte order.
  *
- * <p>The {@code to*} methods validate the array length (mostly requiring an <em>exact</em>
- * length, despite the "at least" wording of their messages) but not {@code index}, and report a
- * bad length with a plain checked {@link Exception}.
+ * <p>Like their .NET counterparts, the {@code to*} methods read at {@code index} and require
+ * {@code bytes.length >= index + size}; extra bytes are ignored.
  *
- * <p>Only {@link #GetBytes(int)} and {@link #toCharRev(byte[], int)} are used in this project, by
- * {@link TlkFile} to turn a Huffman leaf id back into a character.
+ * <p>Not used by the conversion code: {@link TlkFile} turns a Huffman leaf id back into a
+ * character with plain arithmetic, which is what the C# original's
+ * {@code BitConverter.ToChar(BitConverter.GetBytes(0xffff - id), 0)} amounts to.
  *
  * @author kiwimoosical
  * @see <a href="https://www.se7ensins.com/forums/threads/java-c-s-bitconverter-in-java.486271/">
@@ -42,21 +43,17 @@ public class BitConverter {
      * @return {@code {1}} for {@code true}, {@code {0}} for {@code false}
      */
     public static byte[] getBytes(boolean x) {
-        return new byte[]{(byte) (x ? 1:0)};
+        return new byte[]{(byte) (x ? 1 : 0)};
     }
 
     /**
-     * Converts a char to two bytes, <em>little-endian</em> (low byte first). This differs from
-     * the other {@code getBytes} overloads and from {@link #toChar(byte[], int)}, which is
-     * big-endian, so the two are not inverses of each other.
+     * Converts a char to two bytes, big-endian; the inverse of {@link #toChar(byte[], int)}.
      *
      * @param c the character
-     * @return {@code {low byte, high byte}}
+     * @return {@code {high byte, low byte}}
      */
     public static byte[] getBytes(char c) {
-        return new byte[]  {
-                (byte)(c & 0xff),
-                (byte)(c >> 8 & 0xff) };
+        return ByteBuffer.allocate(Character.BYTES).putChar(c).array();
     }
 
     /**
@@ -76,26 +73,18 @@ public class BitConverter {
      * @return {@code {high byte, low byte}}
      */
     public static byte[] getBytes(short x) {
-        return new byte[] {
-                (byte)(x >>> 8),
-                (byte)x
-        };
+        return ByteBuffer.allocate(Short.BYTES).putShort(x).array();
     }
 
     /**
-     * Converts an int to four bytes, big-endian. See {@link #GetBytes(int)} for the native-order
-     * variant.
+     * Converts an int to four bytes, big-endian. See {@link #getBytesLittleEndian(int)} for the
+     * little-endian variant.
      *
      * @param x the value
      * @return the bytes of {@code x}, most significant first
      */
     public static byte[] getBytes(int x) {
-        return new byte[] {
-                (byte)(x >>> 24),
-                (byte)(x >>> 16),
-                (byte)(x >>> 8),
-                (byte)x
-        };
+        return ByteBuffer.allocate(Integer.BYTES).putInt(x).array();
     }
 
     /**
@@ -105,16 +94,7 @@ public class BitConverter {
      * @return the bytes of {@code x}, most significant first
      */
     public static byte[] getBytes(long x) {
-        return new byte[] {
-                (byte)(x >>> 56),
-                (byte)(x >>> 48),
-                (byte)(x >>> 40),
-                (byte)(x >>> 32),
-                (byte)(x >>> 24),
-                (byte)(x >>> 16),
-                (byte)(x >>> 8),
-                (byte)x
-        };
+        return ByteBuffer.allocate(Long.BYTES).putLong(x).array();
     }
 
     /**
@@ -128,14 +108,24 @@ public class BitConverter {
     }
 
     /**
-     * Encodes a string with the platform default charset (UTF-8 on JDK 18 and later, unless
-     * overridden with {@code -Dfile.encoding}).
+     * Encodes a string as UTF-8, whatever the platform default charset.
      *
      * @param x the string
      * @return the encoded bytes
      */
     public static byte[] getBytes(String x) {
-        return x.getBytes();
+        return x.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Converts an int to four bytes, little-endian (low byte first) on every platform: what .NET's
+     * {@code BitConverter.GetBytes(int)} returns on a PC.
+     *
+     * @param value the value
+     * @return the bytes of {@code value}, least significant first
+     */
+    public static byte[] getBytesLittleEndian(int value) {
+        return ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array();
     }
 
     /**
@@ -150,200 +140,149 @@ public class BitConverter {
     }
 
     /**
-     * Converts a long to a double.
+     * Reinterprets the bits of a long as a double, like .NET's
+     * {@code BitConverter.Int64BitsToDouble}; the inverse of {@link #doubleToInt64Bits(double)}.
      *
-     * <p>Note: this is a numeric conversion ({@code (double) x}), not a reinterpretation of the
-     * bits as .NET's {@code BitConverter.Int64BitsToDouble} does, so it is not the inverse of
-     * {@link #doubleToInt64Bits(double)}; {@link Double#longBitsToDouble(long)} would be.
-     *
-     * @param x the value
-     * @return {@code x} converted to the nearest double
+     * @param x the IEEE 754 bit pattern
+     * @return the double with these bits
      */
     public static double int64BitsToDouble(long x) {
-        return (double)x;
+        return Double.longBitsToDouble(x);
     }
 
     /**
-     * Reads a boolean from a one-byte array.
+     * Wraps the {@code size} bytes at {@code index} in a big-endian buffer after checking that
+     * they exist.
      *
-     * @param bytes the array; must have exactly 1 element
-     * @param index position of the byte; only {@code 0} is valid
+     * @param bytes  the array
+     * @param index  position of the first byte
+     * @param size   number of bytes needed
+     * @param method name of the calling method, for the error message
+     * @return a buffer positioned at {@code index}
+     * @throws NullPointerException      if {@code bytes} is {@code null}
+     * @throws IndexOutOfBoundsException if {@code index} is negative or fewer than {@code size}
+     *                                   bytes follow it
+     */
+    private static ByteBuffer wrap(byte[] bytes, int index, int size, String method) {
+        if (bytes == null) {
+            throw new NullPointerException(method + ": byte array is null");
+        }
+        if (index < 0 || index > bytes.length - size) {
+            throw new IndexOutOfBoundsException(method + " needs " + size + (size == 1 ? " byte" : " bytes")
+                    + " at index " + index + ", but the array has " + bytes.length);
+        }
+        return ByteBuffer.wrap(bytes, index, size);
+    }
+
+    /**
+     * Reads a boolean from one byte.
+     *
+     * @param bytes the array
+     * @param index position of the byte
      * @return {@code true} if the byte is non-zero
-     * @throws Exception if {@code bytes.length != 1}
+     * @throws IndexOutOfBoundsException if there is no byte at {@code index}
      */
-    public static boolean toBoolean(byte[] bytes, int index) throws Exception {
-        if (bytes.length != 1)
-            throw new Exception("The length of the byte array must be at least 1 byte long.");
-        return bytes[index] != 0;
+    public static boolean toBoolean(byte[] bytes, int index) {
+        return wrap(bytes, index, 1, "toBoolean").get() != 0;
     }
 
     /**
-     * Reads a char from two bytes, big-endian.
+     * Reads a char from two bytes, big-endian; the inverse of {@link #getBytes(char)}.
      *
-     * @param bytes the array; must have at least 2 elements
-     * @param index position of the high byte; {@code index + 1} must also be valid
+     * @param bytes the array
+     * @param index position of the high byte
      * @return {@code (bytes[index] << 8) | bytes[index + 1]} as an unsigned 16-bit char
-     * @throws Exception if {@code bytes.length < 2}
+     * @throws IndexOutOfBoundsException if fewer than 2 bytes start at {@code index}
      */
-    public static char toChar(byte[] bytes, int index) throws Exception {
-        if (bytes.length < 2) {
-            throw new Exception("The length of the byte array must be at least 2 bytes long.");
-        }
-        return (char) (((0xff & bytes[index]) << 8) | (0xff & bytes[index + 1]));
+    public static char toChar(byte[] bytes, int index) {
+        return wrap(bytes, index, Character.BYTES, "toChar").getChar();
     }
 
     /**
-     * Reads a little-endian char, i.e. the equivalent of .NET's {@code BitConverter.ToChar} on a
-     * little-endian machine, except that {@code index} counts chars rather than bytes.
+     * Reads a char from two bytes, little-endian, i.e. what .NET's {@code BitConverter.ToChar}
+     * does on a PC. The array is not modified.
      *
-     * <p>For an even-length array the result is
-     * {@code (bytes[2 * index + 1] << 8) | bytes[2 * index]}. {@link TlkFile} calls it with the
-     * output of {@link #GetBytes(int)} and {@code index} 0 to get the low 16 bits of an int.
-     *
-     * <p>Note: it reverses {@code bytes} in place as a side effect, and for odd-length arrays the
-     * byte pairs are misaligned.
-     *
-     * @param bytes the array; must have at least 2 elements, and is modified
-     * @param index zero-based char (2-byte) index from the start of the array
-     * @return the decoded char
-     * @throws Exception if {@code bytes.length < 2}
+     * @param bytes the array
+     * @param index position of the low byte
+     * @return {@code (bytes[index + 1] << 8) | bytes[index]} as an unsigned 16-bit char
+     * @throws IndexOutOfBoundsException if fewer than 2 bytes start at {@code index}
      */
-    public static char toCharRev(byte[] bytes, int index) throws Exception {
-        if (bytes.length < 2) {
-            throw new Exception("The length of the byte array must be at least 2 bytes long.");
-        }
-        char[] buffer = new char[bytes.length >> 1];
-        for (int i=0; i< bytes.length/2; i++) {
-            byte temp = bytes[i];
-            bytes[i] = bytes[bytes.length-1-i];
-            bytes[bytes.length-1-i] = temp;
-        }
-        for (int i = 0; i < buffer.length; i++) {
-            int bpos = i << 1;
-            char c = (char)(((bytes[bpos]&0x00FF)<<8) + (bytes[bpos+1]&0x00FF));
-            buffer[i] = c;
-        }
-        int countOfChars = buffer.length;
-        return buffer[countOfChars-1-index];
+    public static char toCharLittleEndian(byte[] bytes, int index) {
+        return wrap(bytes, index, Character.BYTES, "toCharLittleEndian").order(ByteOrder.LITTLE_ENDIAN).getChar();
     }
 
     /**
      * Reads a double from its 8-byte IEEE 754 representation, big-endian.
      *
-     * @param bytes the array; must have exactly 8 elements
-     * @param index position of the first byte; only {@code 0} is valid
+     * @param bytes the array
+     * @param index position of the first byte
      * @return the decoded double
-     * @throws Exception if {@code bytes.length != 8}
+     * @throws IndexOutOfBoundsException if fewer than 8 bytes start at {@code index}
      */
-    public static double toDouble(byte[] bytes, int index) throws Exception {
-        if (bytes.length != 8) {
-            throw new Exception("The length of the byte array must be at least 8 bytes long.");
-        }
-        return Double.longBitsToDouble(toInt64(bytes, index));
+    public static double toDouble(byte[] bytes, int index) {
+        return wrap(bytes, index, Double.BYTES, "toDouble").getDouble();
     }
 
     /**
      * Reads a short from two bytes, big-endian.
      *
-     * <p>Note: the length check requires exactly 8 bytes, although only
-     * {@code bytes[index]} and {@code bytes[index + 1]} are read.
-     *
-     * @param bytes the array; must have exactly 8 elements
+     * @param bytes the array
      * @param index position of the high byte
      * @return the decoded short
-     * @throws Exception if {@code bytes.length != 8}
+     * @throws IndexOutOfBoundsException if fewer than 2 bytes start at {@code index}
      */
-    public static short toInt16(byte[] bytes, int index) throws Exception {
-        if (bytes.length != 8) {
-            throw new Exception("The length of the byte array must be at least 8 bytes long.");
-        }
-        return (short) (((0xff & bytes[index]) << 8) | (0xff & bytes[index + 1]));
+    public static short toInt16(byte[] bytes, int index) {
+        return wrap(bytes, index, Short.BYTES, "toInt16").getShort();
     }
 
     /**
      * Reads an int from four bytes, big-endian.
      *
-     * @param bytes the array; must have exactly 4 elements
-     * @param index position of the most significant byte; only {@code 0} is valid
+     * @param bytes the array
+     * @param index position of the most significant byte
      * @return the decoded int
-     * @throws Exception if {@code bytes.length != 4}
+     * @throws IndexOutOfBoundsException if fewer than 4 bytes start at {@code index}
      */
-    public static int toInt32(byte[] bytes, int index) throws Exception {
-        if (bytes.length != 4) {
-            throw new Exception("The length of the byte array must be at least 4 bytes long.");
-        }
-        return (0xff & bytes[index]) << 24 |
-                (0xff & bytes[index + 1]) << 16 |
-                (0xff & bytes[index + 2]) << 8 |
-                (0xff & bytes[index + 3]);
+    public static int toInt32(byte[] bytes, int index) {
+        return wrap(bytes, index, Integer.BYTES, "toInt32").getInt();
     }
 
     /**
      * Reads a long from eight bytes, big-endian.
      *
-     * @param bytes the array; must have exactly 8 elements
-     * @param index position of the most significant byte; only {@code 0} is valid
+     * @param bytes the array
+     * @param index position of the most significant byte
      * @return the decoded long
-     * @throws Exception if {@code bytes.length != 8}
+     * @throws IndexOutOfBoundsException if fewer than 8 bytes start at {@code index}
      */
-    public static long toInt64(byte[] bytes, int index) throws Exception {
-        if (bytes.length != 8) {
-            throw new Exception("The length of the byte array must be at least 8 bytes long.");
-        }
-        return (long)(0xff & bytes[index]) << 56  |
-                (long)(0xff & bytes[index + 1]) << 48  |
-                (long)(0xff & bytes[index + 2]) << 40  |
-                (long)(0xff & bytes[index + 3]) << 32  |
-                (long)(0xff & bytes[index + 4]) << 24  |
-                (long)(0xff & bytes[index + 5]) << 16  |
-                (long)(0xff & bytes[index + 6]) << 8   |
-                (long) (0xff & bytes[index + 7]);
+    public static long toInt64(byte[] bytes, int index) {
+        return wrap(bytes, index, Long.BYTES, "toInt64").getLong();
     }
 
     /**
      * Reads a float from its 4-byte IEEE 754 representation, big-endian.
      *
-     * @param bytes the array; must have exactly 4 elements
-     * @param index position of the first byte; only {@code 0} is valid
+     * @param bytes the array
+     * @param index position of the first byte
      * @return the decoded float
-     * @throws Exception if {@code bytes.length != 4}
+     * @throws IndexOutOfBoundsException if fewer than 4 bytes start at {@code index}
      */
-    public static float toSingle(byte[] bytes, int index) throws Exception {
-        if (bytes.length != 4) {
-            throw new Exception("The length of the byte array must be at least 4 bytes long.");
-        }
-        return Float.intBitsToFloat(toInt32(bytes, index));
+    public static float toSingle(byte[] bytes, int index) {
+        return wrap(bytes, index, Float.BYTES, "toSingle").getFloat();
     }
 
     /**
-     * Converts an int to four bytes in the platform's native byte order, like .NET's
-     * {@code BitConverter.GetBytes(int)}.
-     *
-     * <p>Note: the result depends on the machine: little-endian (low byte first) on x86 and ARM,
-     * which is what {@link TlkFile}'s character decoding relies on. {@link #getBytes(int)} is the
-     * fixed big-endian variant.
-     *
-     * @param value the value
-     * @return the 4 bytes of {@code value} in {@link ByteOrder#nativeOrder()}
-     */
-    public static byte[] GetBytes(int value) {
-        ByteBuffer buffer = ByteBuffer.allocate(4).order(ByteOrder.nativeOrder());
-        buffer.putInt(value);
-        return buffer.array();
-    }
-
-    /**
-     * Decodes bytes as text with the platform default charset. (.NET's
+     * Decodes UTF-8 bytes as text, the inverse of {@link #getBytes(String)}. (.NET's
      * {@code BitConverter.ToString} instead returns a hex dump such as {@code "01-AB"}.)
      *
      * @param bytes the encoded text
      * @return the decoded string
-     * @throws Exception if {@code bytes} is {@code null}
+     * @throws NullPointerException if {@code bytes} is {@code null}
      */
-    public static String toString(byte[] bytes) throws Exception {
+    public static String toString(byte[] bytes) {
         if (bytes == null) {
-            throw new Exception("The byte array must have at least 1 byte.");
+            throw new NullPointerException("toString: byte array is null");
         }
-        return new String(bytes);
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

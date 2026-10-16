@@ -180,6 +180,16 @@ class TlkFileTest {
             w.setValue(-1);
             assertEquals(-1, w.getValue());
         }
+
+        @Test
+        void leafIdsMapToCharacters() {
+            assertEquals('\0', TlkFile.leafCharacter(-1));
+            assertEquals(' ', TlkFile.leafCharacter(-33));
+            assertEquals('\uffff', TlkFile.leafCharacter(-65536));
+            for (char c : new char[]{'\0', ' ', 'Ж', '\uffff'}) {
+                assertEquals(c, TlkFile.leafCharacter(TlkFile.leafId(c)));
+            }
+        }
     }
 
     @Nested

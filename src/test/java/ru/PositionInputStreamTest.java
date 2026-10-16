@@ -1,9 +1,9 @@
 package ru;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -219,11 +219,42 @@ class PositionInputStreamTest {
     }
 
     @Test
-    @Disabled("Known bug: PositionInputStream.skipNBytes(int) is an empty overload")
     void skipNBytesSkipsExactlyAndAdvancesPosition() throws IOException {
         PositionInputStream p = stream(10);
         p.skipNBytes(3);
         assertEquals(3, p.getPosition());
         assertEquals(3, p.read());
+        p.skipNBytes(0L);
+        p.skipNBytes(-4);
+        assertEquals(4, p.getPosition());
+    }
+
+    @Test
+    void skipNBytesReadsWhatTheStreamDoesNotSkip() throws IOException {
+        // an InputStream whose skip() always returns 0
+        PositionInputStream p = new PositionInputStream(new InputStream() {
+            private int next;
+
+            @Override
+            public int read() {
+                return next < 10 ? next++ : -1;
+            }
+
+            @Override
+            public long skip(long n) {
+                return 0;
+            }
+        });
+        p.skipNBytes(4);
+        assertEquals(4, p.getPosition());
+        assertEquals(4, p.read());
+    }
+
+    @Test
+    void skipNBytesPastTheEndIsEof() {
+        PositionInputStream p = stream(5);
+        EOFException e = assertThrows(EOFException.class, () -> p.skipNBytes(8));
+        assertEquals(5, p.getPosition());
+        assertTrue(e.getMessage().contains("3 more bytes"), e.getMessage());
     }
 }

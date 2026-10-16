@@ -240,14 +240,9 @@ public class TlkFile  {
      *
      * <p>Starting at the root, each bit (read LSB-first with {@link BitArray#getRev(int)}) selects
      * the right child if it is 1 and the left child if it is 0. A non-negative child id is the
-     * index of an inner node; a negative id {@code v} is a leaf for the character
-     * {@code (char) (-1 - v)}, after which decoding restarts at the root. The {@code '\0'} leaf
+     * index of an inner node; a negative id is a leaf for the character
+     * {@link #leafCharacter(int)}, after which decoding restarts at the root. The {@code '\0'} leaf
      * ends the string.
-     *
-     * <p>The character is computed as the low 16 bits of {@code 0xffff - v} using
-     * {@link BitConverter#GetBytes(int)} and {@link BitConverter#toCharRev(byte[], int)}, which
-     * gives the right result only on a little-endian platform. Should the conversion throw, the
-     * stack trace is printed and the character is treated as the terminator.
      *
      * @param bitOffsetWrap in: bit index to start decoding at; out: index of the first bit after
      *                      the terminator's code, i.e. where the next string starts (or
@@ -269,12 +264,7 @@ public class TlkFile  {
                 curNode = characterTree.get(nextNodeID);
             } else {
                 /** it's a leaf! */
-                char c = 0;
-                try {
-                    c = BitConverter.toCharRev(BitConverter.GetBytes(0xffff - nextNodeID), 0);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                char c = leafCharacter(nextNodeID);
                 if (c != '\0') {
                     /** it's not NULL */
                     curString += c;
@@ -290,6 +280,31 @@ public class TlkFile  {
         i++;
         bitOffsetWrap.setValue(i);
         return null;
+    }
+
+    /**
+     * Returns the character of a Huffman leaf: leaf ids are {@code -1 - c}, so {@code -1} is the
+     * {@code '\0'} terminator and {@code -33} a space. This is what the C# original computes as
+     * {@code BitConverter.ToChar(BitConverter.GetBytes(0xffff - id), 0)}, i.e. the low 16 bits of
+     * {@code 0xffff - id}.
+     *
+     * @param leafId a negative child id from the Huffman tree
+     * @return the character
+     * @see #leafId(char)
+     */
+    static char leafCharacter(int leafId) {
+        return (char) (-1 - leafId);
+    }
+
+    /**
+     * Returns the Huffman tree child id that stands for a leaf with the given character; the
+     * inverse of {@link #leafCharacter(int)}.
+     *
+     * @param c the character
+     * @return {@code -1 - c}, a value from {@code -1} to {@code -65536}
+     */
+    static int leafId(char c) {
+        return -1 - c;
     }
 
     /**
@@ -563,9 +578,9 @@ public class TlkFile  {
      * One node of the Huffman tree as stored in the file: two child references of 4 bytes each.
      *
      * <p>A child value {@code >= 0} is the index of another node; a negative value {@code v} is a
-     * leaf for the character {@code (char) (-1 - v)}, so {@code -1} is the {@code '\0'}
-     * terminator and {@code -33} is a space. While decoding, a 0 bit follows {@link #leftNodeId}
-     * and a 1 bit follows {@link #rightNodeId}.
+     * leaf for the character {@code (char) (-1 - v)} (see {@link TlkFile#leafCharacter(int)}), so
+     * {@code -1} is the {@code '\0'} terminator and {@code -33} is a space. While decoding, a 0
+     * bit follows {@link #leftNodeId} and a 1 bit follows {@link #rightNodeId}.
      */
     public static class HuffmanNode {
         /** Child taken on a 0 bit: node index, or {@code -1 - c} for a leaf with character {@code c}. */

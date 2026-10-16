@@ -1,5 +1,6 @@
 package ru;
 
+import java.io.EOFException;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -126,18 +127,29 @@ public final class PositionInputStream extends FilterInputStream {
     }
 
     /**
-     * Meant to skip exactly {@code count} bytes, but does nothing.
+     * Skips exactly {@code n} bytes, advancing the position by {@code n}, or throws if the stream
+     * ends first. Does nothing if {@code n} is zero or negative.
      *
-     * <p>Note: the body is empty, so no bytes are skipped and the position does not change. On
-     * Java 12 and later this is an overload, not an override, of
-     * {@code InputStream.skipNBytes(long)} (which Java 8 to 11 do not have): calls with an
-     * {@code int} argument end up here, calls with a {@code long} still reach the inherited
-     * method, which does skip (through {@link #skip(long)}). Nothing in this project calls it.
+     * <p>Behaves like {@code InputStream.skipNBytes(long)} of Java 12 and later (which it overrides
+     * there) and is also available on Java 8 to 11. Bytes that {@link #skip(long)} does not skip
+     * are read instead, so it works on streams that cannot skip ahead.
      *
-     * @param count number of bytes that should have been skipped (ignored)
+     * @param n number of bytes to skip
+     * @throws EOFException if the stream ends before {@code n} bytes were skipped; the position
+     *                      then counts the bytes that were skipped
+     * @throws IOException  if the wrapped stream fails
      */
-    public void skipNBytes(int count) {
-
+    public synchronized void skipNBytes(long n) throws IOException {
+        while (n > 0) {
+            long skipped = skip(n);
+            if (skipped > 0) {
+                n -= skipped;
+            } else if (read() >= 0) {
+                n--;
+            } else {
+                throw new EOFException("End of stream at position " + pos + ", " + n + " more bytes to skip");
+            }
+        }
     }
 
 }

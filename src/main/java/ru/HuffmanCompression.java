@@ -123,7 +123,7 @@ class HuffmanCompression {
         /**
          * Id written to the TLK tree, assigned by
          * {@link HuffmanCompression#ConvertHuffmanTreeToBuffer()}: inner nodes get their
-         * breadth-first index ({@code 0} is the root), leaves get {@code -1 - data}.
+         * breadth-first index ({@code 0} is the root), leaves get {@link TlkFile#leafId(char)}.
          */
         public int id;
 
@@ -544,8 +544,8 @@ class HuffmanCompression {
      *
      * <p>Ids are assigned breadth-first from the root, visiting the right child before the left
      * one: inner nodes get consecutive indices from 0, so the root is node 0 as the reader
-     * expects; leaves get {@code -1 - c}, which {@link TlkFile} decodes back to the character
-     * {@code c}.
+     * expects; leaves get {@link TlkFile#leafId(char)}, which {@link TlkFile} decodes back to the
+     * character.
      *
      * <p>Note: the pairs are emitted by iterating a {@link HashMap} keyed by node id; that yields
      * id order only because small non-negative {@link Integer} keys happen to iterate in
@@ -565,11 +565,7 @@ class HuffmanCompression {
             HuffmanNode node = q.remove();
             /* if it's a leaf - set it's ID to reflect char data the node contains */
             if (node.left == node.right) {
-                /* store the char data */
-                node.id = -1 - node.data;
-
-                /* that's how it's going to be decoded when parsing TLK file:
-                 * char c = ru.BitConverter.ToChar(ru.BitConverter.GetBytes(0xffff - node.ID), 0); */
+                node.id = TlkFile.leafId(node.data);
             } else {
                 node.id = index++;
                 indices.put(node.id, node);
