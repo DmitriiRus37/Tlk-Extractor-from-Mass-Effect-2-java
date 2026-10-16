@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The bundled sample {@code files/BIOGame_RUS.tlk}, loaded and exported to XML at most once per
- * test JVM and shared by all test classes (exporting it takes about 15 seconds).
+ * test JVM and shared by all test classes (loading and exporting it takes about a second).
  *
  * <p>Tests that use it are skipped (not failed) if the sample file is missing. Callers must not
  * modify the shared {@link TlkFile}.
@@ -49,16 +49,13 @@ final class SampleFixture {
         assumeSamplePresent();
         if (tlk == null) {
             TlkFile t = new TlkFile();
-            t.loadTlkData(TestSupport.samplePath().toString(), true);
+            t.loadTlkData(TestSupport.samplePath().toString());
             tlk = t;
         }
         return tlk;
     }
 
-    /**
-     * The sample's string refs as an unmodifiable random-access list (TlkFile keeps them in a
-     * LinkedList, whose get(i) would make loops over all refs quadratic).
-     */
+    /** The sample's string refs as an unmodifiable list, so that tests cannot change the shared data. */
     static synchronized List<TlkFile.TlkStringRef> refs() throws IOException {
         if (refs == null) {
             List<TlkFile.TlkStringRef> loaded = TestSupport.field(tlk(), "stringRefs");

@@ -83,7 +83,7 @@ class HuffmanCompressionSampleTest {
     void reEncodedSampleDecodesToTheOriginalStrings(@TempDir Path dir) throws Exception {
         Path tlk = HuffmanAccess.oracleTlk(hc).writeTo(dir.resolve("reencoded.tlk"));
         TlkFile t = new TlkFile();
-        t.loadTlkData(tlk.toString(), true);
+        t.loadTlkData(tlk.toString());
         assertEquals(SampleFixture.MALE_COUNT, TlkFileTest.header(t).entry1Count);
         assertEquals(SampleFixture.FEMALE_COUNT, TlkFileTest.header(t).entry2Count);
         assertEquals(SampleFixture.TREE_NODE_COUNT, TlkFileTest.header(t).treeNodeCount);
@@ -118,7 +118,7 @@ class HuffmanCompressionSampleTest {
         Path out = dir.resolve("saved.tlk");
         hc.saveToTlkFile(out.toString(), true);
         TlkFile t = new TlkFile();
-        t.loadTlkData(out.toString(), true);
+        t.loadTlkData(out.toString());
         TlkFile.TlkHeader h = TlkFileTest.header(t);
         assertEquals(SampleFixture.MAGIC, h.magic);
         assertEquals(SampleFixture.VERSION, h.ver);

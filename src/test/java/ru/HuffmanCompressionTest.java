@@ -83,7 +83,7 @@ class HuffmanCompressionTest {
     private TlkFile roundTrip(HuffmanCompression hc) throws Exception {
         Path tlk = HuffmanAccess.oracleTlk(hc).writeTo(dir.resolve("oracle" + (fileCounter++) + ".tlk"));
         TlkFile t = new TlkFile();
-        t.loadTlkData(tlk.toString(), true);
+        t.loadTlkData(tlk.toString());
         return t;
     }
 
@@ -585,7 +585,7 @@ class HuffmanCompressionTest {
             Path out = dir.resolve("saved.tlk");
             load(small()).saveToTlkFile(out.toString(), true);
             TlkFile t = new TlkFile();
-            t.loadTlkData(out.toString(), true);
+            t.loadTlkData(out.toString());
             assertEquals(6, TlkFileTest.header(t).entry1Count);
             assertEquals(2, TlkFileTest.header(t).entry2Count);
             assertEquals(Arrays.asList("Hello", CYRILLIC, null, "Male", "", "Line one\nLine two\t(tab)",
@@ -604,7 +604,7 @@ class HuffmanCompressionTest {
             Path out = dir.resolve("ordered.tlk");
             load(xml("1.0.4", strings.toArray(new String[0]))).saveToTlkFile(out.toString(), true);
             TlkFile t = new TlkFile();
-            t.loadTlkData(out.toString(), true);
+            t.loadTlkData(out.toString());
             List<TlkFile.TlkStringRef> refs = TlkFileTest.refs(t);
             for (int i = 0; i < ids.length; i++) {
                 assertEquals(ids[i], refs.get(i).stringId, "position " + i);

@@ -17,6 +17,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -43,7 +44,7 @@ class TlkFileTest {
         return TestSupport.field(t, "header");
     }
 
-    /** The loaded string refs, copied into an ArrayList (TlkFile keeps a LinkedList), or null. */
+    /** A copy of the loaded string refs, or null. */
     static List<TlkFile.TlkStringRef> refs(TlkFile t) {
         List<TlkFile.TlkStringRef> refs = TestSupport.field(t, "stringRefs");
         return refs == null ? null : new ArrayList<>(refs);
@@ -75,8 +76,23 @@ class TlkFileTest {
 
     private TlkFile load(Path file) throws IOException {
         TlkFile t = new TlkFile();
-        t.loadTlkData(file.toString(), true);
+        t.loadTlkData(file.toString());
         return t;
+    }
+
+    /** Asserts that loading fails with an exception of the given type whose message contains {@code text}. */
+    private <T extends IOException> T assertLoadFails(Class<T> type, Path file, String text) {
+        T e = assertThrows(type, () -> load(file));
+        assertTrue(e.getMessage().contains(text), e.getMessage());
+        return e;
+    }
+
+    private static BitArray code(String zeroesAndOnes) {
+        boolean[] b = new boolean[zeroesAndOnes.length()];
+        for (int i = 0; i < b.length; i++) {
+            b[i] = zeroesAndOnes.charAt(i) == '1';
+        }
+        return new BitArray(b);
     }
 
     private TlkFile load(TlkTestFile file) throws IOException {
@@ -173,15 +189,6 @@ class TlkFileTest {
         }
 
         @Test
-        void wrapHoldsAMutableInt() {
-            assertEquals(0, new TlkFile.Wrap().getValue());
-            TlkFile.Wrap w = new TlkFile.Wrap(42);
-            assertEquals(42, w.getValue());
-            w.setValue(-1);
-            assertEquals(-1, w.getValue());
-        }
-
-        @Test
         void leafIdsMapToCharacters() {
             assertEquals('\0', TlkFile.leafCharacter(-1));
             assertEquals(' ', TlkFile.leafCharacter(-33));
@@ -189,38 +196,6 @@ class TlkFileTest {
             for (char c : new char[]{'\0', ' ', 'Ж', '\uffff'}) {
                 assertEquals(c, TlkFile.leafCharacter(TlkFile.leafId(c)));
             }
-        }
-    }
-
-    @Nested
-    class BaseStreamSeek {
-
-        @Test
-        void opensTheFileAtTheGivenOffset() throws IOException {
-            Path f = write(new byte[]{10, 11, 12, 13, 14});
-            try (PositionInputStream s = TlkFile.baseStreamSeek(3, f.toString())) {
-                assertEquals(3, s.getPosition());
-                assertEquals(13, s.read());
-                assertEquals(4, s.getPosition());
-            }
-            try (PositionInputStream s = TlkFile.baseStreamSeek(0, f.toString())) {
-                assertEquals(0, s.getPosition());
-                assertEquals(10, s.read());
-            }
-        }
-
-        @Test
-        void seekingPastTheEndLeavesNothingToRead() throws IOException {
-            Path f = write(new byte[]{1, 2});
-            try (PositionInputStream s = TlkFile.baseStreamSeek(100, f.toString())) {
-                assertEquals(-1, s.read());
-            }
-        }
-
-        @Test
-        void missingFile() {
-            assertThrows(NoSuchFileException.class,
-                    () -> TlkFile.baseStreamSeek(0, dir.resolve("missing.tlk").toString()));
         }
     }
 
@@ -322,7 +297,7 @@ class TlkFileTest {
         @Test
         void loadingAgainReplacesPreviousContent() throws IOException {
             TlkFile t = load(typicalFile());
-            t.loadTlkData(write(new TlkTestFile().male(9, "other")).toString(), true);
+            t.loadTlkData(write(new TlkTestFile().male(9, "other")).toString());
             assertEquals(1, refs(t).size());
             assertEquals("other", refs(t).get(0).data);
             assertEquals(1, header(t).entry1Count);
@@ -346,48 +321,45 @@ class TlkFileTest {
 
         @Test
         void missingFile() {
-            assertThrows(NoSuchFileException.class, () -> new TlkFile().loadTlkData(dir.resolve("nope.tlk").toString(), true));
+            assertThrows(NoSuchFileException.class, () -> new TlkFile().loadTlkData(dir.resolve("nope.tlk").toString()));
         }
 
         @Test
         void directoryInsteadOfFile() {
-            assertThrows(IOException.class, () -> new TlkFile().loadTlkData(dir.toString(), true));
+            assertThrows(IOException.class, () -> new TlkFile().loadTlkData(dir.toString()));
         }
 
         @Test
         void badMagicIsRejected() throws IOException {
             Path f = write(typicalFile().magic(0x12345678));
-            assertThrows(RuntimeException.class, () -> load(f));
+            assertLoadFails(IOException.class, f, "Not a Mass Effect 2 TLK file (magic number 0x12345678");
         }
 
         @Test
         void xboxMagicIsRejected() throws IOException {
             Path f = write(typicalFile().magic(TlkTestFile.XBOX_MAGIC));
-            assertThrows(RuntimeException.class, () -> load(f));
+            assertLoadFails(IOException.class, f, "Xbox 360");
         }
 
         @Test
         void allZeroFileIsRejected() throws IOException {
-            Path f = write(new byte[64]);
-            assertThrows(RuntimeException.class, () -> load(f));
+            assertLoadFails(IOException.class, write(new byte[64]), "magic number 0x0 ");
         }
 
         @Test
         void emptyFileIsEof() throws IOException {
-            Path f = write(new byte[0]);
-            assertThrows(EOFException.class, () -> load(f));
+            assertLoadFails(EOFException.class, write(new byte[0]), "too short for a TLK header");
         }
 
         @Test
         void fileTruncatedInHeaderIsEof() throws IOException {
-            Path f = write(Arrays.copyOf(typicalFile().build(), 27));
-            assertThrows(EOFException.class, () -> load(f));
+            assertLoadFails(EOFException.class, write(Arrays.copyOf(typicalFile().build(), 27)), "27 bytes");
         }
 
         @Test
         void fileTruncatedInStringRefsIsEof() throws IOException {
             Path f = write(Arrays.copyOf(typicalFile().build(), TlkTestFile.HEADER_SIZE + 12));
-            assertThrows(EOFException.class, () -> load(f));
+            assertLoadFails(EOFException.class, f, "Truncated TLK file");
         }
 
         @Test
@@ -395,27 +367,65 @@ class TlkFileTest {
             TlkTestFile file = typicalFile();
             byte[] full = file.build();
             Path f = write(Arrays.copyOf(full, file.treeOffset() + 12));
-            assertThrows(EOFException.class, () -> load(f));
+            assertLoadFails(EOFException.class, f, "the file has " + (file.treeOffset() + 12));
         }
 
         @Test
         void dataWithoutTreeIsRejected() throws IOException {
             Path f = write(typicalFile().treeNodeCount(0));
-            assertThrows(Exception.class, () -> load(f));
+            assertLoadFails(IOException.class, f, "no Huffman tree");
         }
 
         @Test
-        @Disabled("Known bug: loadTlkData ignores short reads, so a truncated data block is silently zero-filled")
+        void negativeCountsAreRejected() throws IOException {
+            assertLoadFails(IOException.class, write(typicalFile().entry2Count(-1)), "negative count");
+            assertLoadFails(IOException.class, write(typicalFile().dataLen(-5)), "negative count");
+        }
+
+        @Test
+        void hugeCountsAreRejectedWithoutAllocating() throws IOException {
+            assertLoadFails(EOFException.class, write(typicalFile().entry1Count(Integer.MAX_VALUE)), "Truncated");
+            assertLoadFails(EOFException.class, write(typicalFile().dataLen(Integer.MAX_VALUE)), "Truncated");
+        }
+
+        @Test
+        void treeNodePointingToAMissingNodeIsRejected() throws IOException {
+            Path f = write(new TlkTestFile().tree(Arrays.asList(5, -1), Collections.singletonMap('\0', code("1"))).male(1, ""));
+            assertLoadFails(IOException.class, f, "node 0 points to node 5");
+        }
+
+        @Test
+        void stringWithoutTerminatorIsRejected() throws IOException {
+            Path f = write(new TlkTestFile().male(1, "abc").maleRaw(2, 100_000));
+            assertLoadFails(IOException.class, f, "bit offset 100000 has no terminator");
+        }
+
+        @Test
+        void trailingBytesAreIgnored() throws IOException {
+            byte[] full = typicalFile().build();
+            TlkFile t = load(write(Arrays.copyOf(full, full.length + 10)));
+            assertEquals("Hello", refs(t).get(0).data);
+        }
+
+        @Test
+        void failedLoadKeepsThePreviousContent() throws IOException {
+            TlkFile t = load(typicalFile());
+            Path bad = write(typicalFile().magic(1));
+            assertThrows(IOException.class, () -> t.loadTlkData(bad.toString()));
+            assertEquals(5, refs(t).size());
+            assertEquals("Hello", refs(t).get(0).data);
+        }
+
+        @Test
         void fileTruncatedInDataBlockIsEof() throws IOException {
             TlkTestFile file = typicalFile();
             byte[] full = file.build();
             assertTrue(full.length - file.dataOffset() > 2);
             Path f = write(Arrays.copyOf(full, file.dataOffset() + 1));
-            assertThrows(EOFException.class, () -> load(f));
+            assertLoadFails(EOFException.class, f, "Truncated TLK file");
         }
 
         @Test
-        @Disabled("Known bug: loadTlkData leaks the streams opened by its first two seeks")
         void loadingDoesNotLeakFileHandles() throws IOException {
             Path f = write(typicalFile());
             load(f);

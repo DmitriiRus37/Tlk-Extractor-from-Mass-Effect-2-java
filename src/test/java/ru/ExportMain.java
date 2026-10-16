@@ -13,7 +13,7 @@ public final class ExportMain {
 
     public static void main(String[] args) throws Exception {
         TlkFile t = new TlkFile();
-        t.loadTlkData(args[0], true);
+        t.loadTlkData(args[0]);
         t.storeToFile(args[1], FileFormat.valueOf(args[2]), null);
     }
 }

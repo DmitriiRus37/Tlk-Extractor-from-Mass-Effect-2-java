@@ -1,7 +1,6 @@
 package ru;
 
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -215,8 +214,6 @@ class TlkFileSampleTest {
     }
 
     @Test
-    @Disabled("Bug: saveToXmlFile and saveToTextFile call get(i) on the LinkedList of string refs, so export "
-            + "time grows quadratically (the sample takes ~15 s as XML and ~20 s as text instead of ~1-3 s)")
     void xmlExportTimeGrowsLinearly(@TempDir Path dir) throws Exception {
         List<TlkFile.TlkStringRef> all = SampleFixture.refs();
         TlkFile.TlkHeader header = TlkFileTest.header(SampleFixture.tlk());
@@ -224,20 +221,30 @@ class TlkFileSampleTest {
         TlkFile full = withRefs(header, all);
         String out = dir.resolve("timed.xml").toString();
 
-        eighth.storeToFile(out, FileFormat.XML, null);   // warm-up
-        long start = System.nanoTime();
-        eighth.storeToFile(out, FileFormat.XML, null);
-        long eighthTime = System.nanoTime() - start;
-        start = System.nanoTime();
-        full.storeToFile(out, FileFormat.XML, null);
-        long fullTime = System.nanoTime() - start;
+        full.storeToFile(out, FileFormat.XML, null);   // warm-up
+        long eighthTime = fastestExport(eighth, out);
+        long fullTime = fastestExport(full, out);
 
         // linear: ~8x; quadratic: ~64x
         assertTrue(fullTime < 24 * eighthTime,
                 "8x the entries took " + (double) fullTime / eighthTime + "x as long");
     }
 
-    /** A TlkFile holding the given refs, in a LinkedList like loadTlkData creates. */
+    /** Shortest of three XML exports, in nanoseconds. */
+    private static long fastestExport(TlkFile t, String out) throws Exception {
+        long best = Long.MAX_VALUE;
+        for (int i = 0; i < 3; i++) {
+            long start = System.nanoTime();
+            t.storeToFile(out, FileFormat.XML, null);
+            best = Math.min(best, System.nanoTime() - start);
+        }
+        return best;
+    }
+
+    /**
+     * A TlkFile holding the given refs, in a LinkedList so that an export that indexes the list
+     * instead of iterating it shows up as quadratic.
+     */
     private static TlkFile withRefs(TlkFile.TlkHeader header, List<TlkFile.TlkStringRef> refs) {
         TlkFile t = new TlkFile();
         TestSupport.setField(t, "header", header);

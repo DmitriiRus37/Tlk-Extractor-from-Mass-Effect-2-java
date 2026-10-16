@@ -134,7 +134,7 @@ public class FxmlController {
         statusTlkToXml.setText("in progress");
         progressBarTlkToXml.setProgress(0.0);
         TlkFile tf = new TlkFile();
-        tf.loadTlkData(textFieldInputPathTlkToXml.getText(), true);
+        tf.loadTlkData(textFieldInputPathTlkToXml.getText());
         tf.storeToFile(textFieldIOutputPathTlkToXml.getText(), FileFormat.XML, progressBarTlkToXml::setProgress);
         statusTlkToXml.setText("DONE");
     }

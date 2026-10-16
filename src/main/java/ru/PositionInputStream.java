@@ -8,12 +8,15 @@ import java.io.InputStream;
 /**
  * An {@link InputStream} filter that counts the bytes consumed from the wrapped stream, so the
  * reader can ask for its current byte offset (the Java stand-in for C#
- * {@code BinaryReader.BaseStream.Position}, used by {@link TlkFile}).
+ * {@code BinaryReader.BaseStream.Position}).
  *
  * <p>The position is advanced by {@link #read()}, {@link #read(byte[], int, int)} (and therefore
  * by the inherited {@link #read(byte[])}) and {@link #skip(long)}, and restored by
  * {@link #reset()}. It starts at 0 when the filter is created, whatever the wrapped stream had
  * already consumed. The position-tracking methods are {@code synchronized}.
+ *
+ * <p>{@link TlkFile} reads TLK files through it so that its error messages can name the byte
+ * offset where a file is truncated or corrupt.
  */
 public final class PositionInputStream extends FilterInputStream {
 

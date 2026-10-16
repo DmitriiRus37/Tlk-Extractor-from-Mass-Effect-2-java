@@ -13,9 +13,8 @@
  *
  * <h2>TLK to XML ("Create XML" tab)</h2>
  * <ol>
- *   <li>{@link ru.TlkFile#loadTlkData(String, boolean)} reads the header, tree and data block,
- *       decodes every string by walking the tree bit by bit, and attaches to each string ref the
- *       text at its bit offset.</li>
+ *   <li>{@link ru.TlkFile#loadTlkData(String)} reads the header, string refs, tree and data
+ *       block and decodes the text of every string ref by walking the tree bit by bit.</li>
  *   <li>{@link ru.TlkFile#storeToFile(String, ru.FileFormat, java.util.function.DoubleConsumer)}
  *       writes one {@code <string>} element per string ref, in file order, and re-indents the
  *       result:
