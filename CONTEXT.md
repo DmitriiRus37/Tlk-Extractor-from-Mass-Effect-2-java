@@ -11,7 +11,7 @@ Branch: `modernization`.
 | 2 | Javadoc for all classes/methods | done |
 | 3 | Tests (~80% coverage) + corner cases | done |
 | 4 | Make it build/run on Java 1.8 – 25 | done |
-| 5 | Find bugs / refactor | pending |
+| 5 | Find bugs / refactor | done |
 | 6 | Implement 2 more `FileFormat` values | pending |
 
 ## Environment
@@ -22,7 +22,7 @@ Branch: `modernization`.
   - 8: `~/Library/Java/JavaVirtualMachines/corretto-1.8.0_504/Contents/Home` (Corretto 8 ships **no JavaFX**)
 - Maven 3.10.0 (Homebrew) runs on JDK 27 by default, so always `export JAVA_HOME=...` before running `mvn`.
 - Maven Central reachable.
-- **JDK 27 (Homebrew default) hangs** in `TlkFileSampleTest` for over 10 minutes: the quadratic per-bit `LinkedList.get` decoding (bug #10) runs pathologically slowly there. JDK 25 runs the whole suite in about 15 s. This should go away once #10 is fixed.
+- **JDK 27 (Homebrew default) hangs** in `TlkFileSampleTest` for over 10 minutes: the quadratic per-bit `LinkedList.get` decoding (bug #10) runs pathologically slowly there. JDK 25 runs the whole suite in about 15 s. Fixed in step 5 (#10).
 - `.idea/misc.xml` gets an `ExternalStorageConfigurationManager` line written by IntelliJ. Don't commit it.
 
 ## Project facts
@@ -115,9 +115,65 @@ Branch: `modernization`.
   - GUI tests skip on headless Linux CI except on JDK 25 (`xvfb-run` would fix that).
   - Bug #11 (charset) is masked in tests by surefire's `-Dfile.encoding=UTF-8` but will hit real JDK 8 users.
 
-## Known bugs (to fix in step 5)
+## Step 5: bug fixes and refactoring
 
-Re-enable the matching `@Disabled` test when fixing each one.
+- Results:
+  - All 20 known bugs fixed, plus about 12 new ones; 0 `@Disabled` tests remain.
+  - Tests: JDK 25 324/0 skipped, JDK 11 324/1 skipped (`AppTest` real window), Corretto 8 312/0 (GUI excluded).
+  - Core coverage 99.2% line / 97.3% branch; suite takes about 9 s on JDK 25.
+- Performance on the sample: XML export went from 17.7 s to about 0.1 s. The full TLK→XML→TLK→XML round trip takes about 0.8 s, and the second XML is byte-identical to the first.
+- Re-encoded TLK size: 2,833,282 bytes against 2,823,069 for the original (+0.36%), because the writer doesn't share string tails.
+- New bugs fixed:
+  - **XXE:** DOM parsing allowed DTD and external entities; reading is now StAX with both off.
+  - Node index out of range, string without terminator, and negative header counts now give clear errors.
+  - Lone CR is kept as `&#13;`; text XML can't represent (lone surrogates, U+FFFE/U+FFFF) is rejected.
+  - The Huffman tree is deterministic (PriorityQueue with first-occurrence tie-break).
+  - A failed load keeps the previous content.
+  - Whitespace around `<id>`/`<position>` is accepted; a wrong root element is rejected.
+  - Timings are no longer printed to stdout.
+- XML format changes:
+  - It now starts with `<?xml version="1.0" encoding="UTF-8"?>`.
+  - Optional `hasText="true|false"` on `<data>`, written only when the id's sign is misleading. It fixes the `-1` ambiguity (#8).
+  - Otherwise the sample's XML is byte-identical to the old tool's output.
+- GUI:
+  - Conversions run in a `javafx.concurrent.Task` with real progress through `ProgressReporter` (at most one update per percent).
+  - Save dialogs for outputs; cancel is null-safe; the tab is locked while running; status shows `DONE` / `FAILED: <reason>`.
+  - The debug `(#id)` prefix is behind a new "Test version" checkbox, off by default.
+  - FXML ids `textFieldIOutputPath*` renamed to `textFieldOutputPath*`; new `checkBoxDebugXmlToTlk`.
+- API changes:
+  - `TlkFile`:
+    - `loadTlkData(String)` (no `isPC`).
+    - `storeToFile(String, FileFormat, DoubleConsumer)` now throws only `IOException`, and the progress callback is actually used.
+  - `HuffmanCompression`:
+    - `loadInputData(String, FileFormat, boolean)` throws `IOException`, or `IllegalArgumentException` for non-XML input.
+    - `saveToTlkFile(String, DoubleConsumer)`.
+    - Internals renamed to camelCase: `readXml`, `prepareHuffmanCoding`, `buildCodes`, `treeToBuffer()` returning `int[]`, `BitWriter`, `compareVersions`.
+    - `TlkEntry.stringId`; constants `MIN_TOOL_VERSION`, `DEFAULT_TOOL_VERSION`, `NON_LOCALIZABLE_FLAG`.
+  - `BitConverter`:
+    - `getBytesLittleEndian(int)` and `toCharLittleEndian(byte[], byteIndex)`.
+    - Unchecked exceptions instead of `throws Exception`.
+  - Removed: `Endian`, `TlkFile.Wrap`/`GetString`/`baseStreamSeek`/`prettyXmlFile`, `BitArray.getBit`, `App.getPrimaryStage`, the controller's dead fields.
+  - New `TlkHeader` constants (`SIZE`, `MAGIC`, `XBOX_MAGIC`, …) and `write(OutputStream)` on header, string-ref and node.
+- **Format dispatch:** `storeToFile` and `loadInputData` both `switch` on `FileFormat`; a new format just adds a `case`. CSV still produces the TXT listing.
+- Facts from the C# original (jgoclawski/me2-tlk-tool):
+  - The localizable mask really is `0x8000000` (bit 27).
+  - The debug prefix is applied only to ids ≥ 0 that lack that bit.
+  - Xbox files are big-endian, magic 1416391424.
+  - Entries use a `Dictionary`, which keeps insertion order and throws on a third occurrence of an id.
+  - The tree is written breadth-first, right child first.
+  - No string deduplication; no byte-reproducible output (unstable sort).
+  - Pre-1.0.3 XML only triggers a warning in C#; Java rejects it.
+  - `\r\n` is replaced by `\n` on import.
+  - The GUI used a BackgroundWorker and a "Test version" checkbox, off by default; `TLKToolVersion` is 1.0.4.
+- Deliberately not done:
+  - `BitConverter`/`PositionInputStream` kept although the conversion code no longer uses them; they could be deleted.
+  - No tail sharing in the writer.
+  - No Xbox (big-endian) support.
+  - Female-only ids aren't recoverable because the XML has no section marker.
+
+## Known bugs found in steps 1–3
+
+**All fixed in step 5.** Each one's `@Disabled` test is enabled again and passes. Kept for history.
 
 ### HuffmanCompression (XML → TLK)
 
