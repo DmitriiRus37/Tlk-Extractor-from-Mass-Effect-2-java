@@ -15,8 +15,9 @@ import java.io.InputStream;
  * {@link #reset()}. It starts at 0 when the filter is created, whatever the wrapped stream had
  * already consumed. The position-tracking methods are {@code synchronized}.
  *
- * <p>{@link TlkFile} reads TLK files through it so that its error messages can name the byte
- * offset where a file is truncated or corrupt.
+ * <p>Not used by the conversion code: {@link TlkFile} reads a TLK file into memory in one piece
+ * and parses it with a {@link java.nio.ByteBuffer}, which is much faster than reading it an
+ * {@code int} at a time through this filter.
  */
 public final class PositionInputStream extends FilterInputStream {
 

@@ -112,8 +112,30 @@ public class BitArray {
      * @throws NullPointerException if {@code a} is {@code null}
      */
     public BitArray(byte[] a) {
-        repn = a.clone();
+        this(a.clone(), null);
+    }
+
+    /**
+     * Creates a {@code BitArray} of {@code 8 * repn.length} bits backed by {@code repn} itself.
+     *
+     * @param repn  the storage, not copied
+     * @param owner ignored; distinguishes this constructor from {@link #BitArray(byte[])}
+     */
+    private BitArray(byte[] repn, Void owner) {
+        this.repn = repn;
         length = repn.length * BITS_PER_UNIT;
+    }
+
+    /**
+     * Like {@link #BitArray(byte[])}, but without copying: the array becomes the storage of the
+     * result, so the caller must not change it afterwards.
+     *
+     * @param a the bytes to use
+     * @return a {@code BitArray} of {@code 8 * a.length} bits backed by {@code a}
+     * @throws NullPointerException if {@code a} is {@code null}
+     */
+    static BitArray wrap(byte[] a) {
+        return new BitArray(a, null);
     }
 
     /**

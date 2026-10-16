@@ -1,17 +1,19 @@
 package ru;
 
-import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Writer;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +63,10 @@ public class TlkFile {
      * version.
      */
     static final String TOOL_VERSION = "1.0.4";
+    /**
+     * Largest part of a TLK file after the header that is read: the most a byte array can hold.
+     */
+    private static final long MAX_BODY_SIZE = Integer.MAX_VALUE - 8;
 
     /** Header of the loaded file; {@code null} until {@link #loadTlkData(String)} succeeds. */
     private TlkHeader header;
@@ -105,26 +111,35 @@ public class TlkFile {
     public void loadTlkData(String fileName) throws IOException {
         Path path = Paths.get(fileName);
         long fileSize = Files.size(path);
-        try (PositionInputStream in = new PositionInputStream(new BufferedInputStream(Files.newInputStream(path)))) {
+        try (DataInputStream in = new DataInputStream(Files.newInputStream(path))) {
             TlkHeader newHeader = readHeader(in, fileName, fileSize);
+
+            // the rest of what the header announces in one read, then parsed from memory
+            long bodySize = newHeader.expectedFileSize() - TlkHeader.SIZE;
+            if (bodySize > MAX_BODY_SIZE) {
+                throw new IOException("TLK file too large (the header announces " + newHeader.expectedFileSize()
+                        + " bytes): " + fileName);
+            }
+            byte[] body = new byte[(int) bodySize];
+            in.readFully(body);
+            ByteBuffer buffer = ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN);
 
             int refCount = newHeader.entry1Count + newHeader.entry2Count;
             List<TlkStringRef> refs = new ArrayList<>(refCount);
             for (int i = 0; i < refCount; i++) {
-                TlkStringRef ref = new TlkStringRef(in);
+                TlkStringRef ref = new TlkStringRef(buffer.getInt(), buffer.getInt());
                 ref.position = i;
                 refs.add(ref);
             }
 
             List<HuffmanNode> tree = new ArrayList<>(newHeader.treeNodeCount);
             for (int i = 0; i < newHeader.treeNodeCount; i++) {
-                tree.add(new HuffmanNode(in));
+                tree.add(new HuffmanNode(buffer.getInt(), buffer.getInt()));
             }
             checkTree(tree, fileName);
 
-            byte[] data = new byte[newHeader.dataLen];
-            new DataInputStream(in).readFully(data);
-            BitArray newBits = new BitArray(data);
+            byte[] data = Arrays.copyOfRange(body, buffer.position(), body.length);
+            BitArray newBits = BitArray.wrap(data);
 
             Map<Integer, String> textByOffset = decodeStrings(refs, tree, data, fileName);
             for (TlkStringRef ref : refs) {
