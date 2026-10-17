@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.function.DoubleConsumer;
 import java.util.stream.IntStream;
 
@@ -397,7 +396,7 @@ public class TlkFile {
         }
         try {
             for (int i = 0; i < chunks.size(); i++) {
-                write(out, join(chunks.get(i)));
+                write(out, Workers.join(chunks.get(i)));
                 for (int k = i * EXPORT_CHUNK; k < Math.min(refs.length, (i + 1) * EXPORT_CHUNK); k++) {
                     progress.step();
                 }
@@ -453,31 +452,6 @@ public class TlkFile {
             return text.encode();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
-        }
-    }
-
-    /**
-     * Waits for a chunk and returns it, rethrowing its failure as thrown in the task.
-     *
-     * @param chunk the chunk
-     * @return its bytes
-     * @throws IOException if formatting the chunk failed with one
-     */
-    private static ByteBuffer join(CompletableFuture<ByteBuffer> chunk) throws IOException {
-        try {
-            return chunk.join();
-        } catch (CompletionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof UncheckedIOException) {
-                throw ((UncheckedIOException) cause).getCause();
-            }
-            if (cause instanceof RuntimeException) {
-                throw (RuntimeException) cause;
-            }
-            if (cause instanceof Error) {
-                throw (Error) cause;
-            }
-            throw e;
         }
     }
 

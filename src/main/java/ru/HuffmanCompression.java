@@ -473,8 +473,11 @@ class HuffmanCompression {
      * @return the data block; the last byte is zero-padded
      * @throws IllegalStateException if the data block would exceed {@link Integer#MAX_VALUE}
      *                               bits, the largest bit offset a TLK file can hold
+     * @throws IOException           never in practice: encoding throws no checked exception, but
+     *                               {@link Workers#join} declares it
      */
-    private byte[] encodeTexts(List<String> texts, int[] offsets, int[] textIndex, ProgressReporter progress) {
+    private byte[] encodeTexts(List<String> texts, int[] offsets, int[] textIndex, ProgressReporter progress)
+            throws IOException {
         List<CompletableFuture<BitWriter>> chunks = new ArrayList<>();
         for (int from = 0; from < texts.size(); from += ENCODE_CHUNK) {
             int start = from;
@@ -492,14 +495,19 @@ class HuffmanCompression {
         BitWriter[] encoded = new BitWriter[chunks.size()];
         long[] chunkStart = new long[chunks.size() + 1];
         int entry = 0;
-        for (int k = 0; k < chunks.size(); k++) {
-            encoded[k] = chunks.get(k).join();
-            chunkStart[k + 1] = chunkStart[k] + encoded[k].bitCount();
-            int done = Math.min(texts.size(), (k + 1) * ENCODE_CHUNK);
-            // texts are numbered in order of first occurrence, so the finished entries come first
-            for (; entry < textIndex.length && textIndex[entry] < done; entry++) {
-                progress.step();
+        try {
+            for (int k = 0; k < chunks.size(); k++) {
+                encoded[k] = Workers.join(chunks.get(k));
+                chunkStart[k + 1] = chunkStart[k] + encoded[k].bitCount();
+                int done = Math.min(texts.size(), (k + 1) * ENCODE_CHUNK);
+                // texts are numbered in order of first occurrence, so the finished entries come first
+                for (; entry < textIndex.length && textIndex[entry] < done; entry++) {
+                    progress.step();
+                }
             }
+        } finally {
+            // after a failure, chunks not yet started are not needed any more
+            chunks.forEach(chunk -> chunk.cancel(false));
         }
         for (; entry < textIndex.length; entry++) {
             progress.step();

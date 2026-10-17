@@ -1,5 +1,9 @@
 package ru;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ForkJoinPool;
 
 /**
@@ -35,5 +39,28 @@ final class Workers {
      */
     static ForkJoinPool pool() {
         return Holder.POOL;
+    }
+
+    /**
+     * Waits for a task and returns its result, rethrowing its failure as thrown in the task: an
+     * {@link IOException} wrapped in an {@link UncheckedIOException}, or the {@link RuntimeException}
+     * or {@link Error} itself, rather than a {@link CompletionException} around it.
+     *
+     * @param task the task
+     * @param <T>  type of its result
+     * @return its result
+     * @throws IOException if the task failed with one
+     */
+    static <T> T join(CompletableFuture<T> task) throws IOException {
+        try {
+            return task.join();
+        } catch (CompletionException e) {
+            switch (e.getCause()) {
+                case UncheckedIOException io -> throw io.getCause();
+                case RuntimeException runtime -> throw runtime;
+                case Error error -> throw error;
+                case null, default -> throw e;
+            }
+        }
     }
 }
