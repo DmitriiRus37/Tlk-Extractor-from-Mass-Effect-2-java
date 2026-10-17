@@ -14,6 +14,10 @@
 #   The cache is recorded again whenever the JDK, the jar or the class path changes (an AOT
 #   cache only checks the jar's size, so a stale one could run old code). Set TLK_NO_AOT=1 to
 #   start without the cache.
+# - On JDK 21 to 24, which have no AOT cache, the same training run records a dynamic CDS archive
+#   (target/tlk-extractor.jsa, -XX:+AutoCreateSharedArchive), which the JVM itself records again
+#   when the JDK or the jar changes. Measured on JDK 25 as a stand-in: JavaFX startup ~525 ->
+#   ~370 ms; conversions do not get faster. TLK_NO_AOT=1 disables it too.
 set -e
 cd "$(dirname "$0")"
 
@@ -47,13 +51,14 @@ CLASSPATH_FILE=target/classpath.txt
 STAMP=target/run.stamp
 AOT_CACHE=target/tlk-extractor.aot
 AOT_KEY=$AOT_CACHE.key
+CDS_ARCHIVE=target/tlk-extractor.jsa
 
 if [ ! -f "$JAR" ] || [ ! -f "$CLASSPATH_FILE" ] || [ ! -f "$STAMP" ] \
         || [ -n "$(find src pom.xml -newer "$STAMP" | head -n 1)" ]; then
     mvn -q -DskipTests package dependency:build-classpath \
         -Dmdep.outputFile="$CLASSPATH_FILE" -DincludeScope=runtime
     touch "$STAMP"
-    rm -f "$AOT_CACHE"
+    rm -f "$AOT_CACHE" "$CDS_ARCHIVE"
 fi
 
 DEPENDENCIES=$(cat "$CLASSPATH_FILE")
@@ -81,6 +86,15 @@ if [ "$JAVA_MAJOR" -ge 25 ] && [ -z "$TLK_NO_AOT" ]; then
     fi
     if [ -f "$AOT_CACHE" ]; then
         set -- -XX:AOTCache="$AOT_CACHE" "$@"
+    fi
+elif [ -z "$TLK_NO_AOT" ]; then
+    # the JVM logs as errors that the JDK's own archive cannot use its module optimizations with
+    # an extra module path; harmless, the archive is used
+    set -- -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile="$CDS_ARCHIVE" -Xlog:cds=off "$@"
+    if [ ! -f "$CDS_ARCHIVE" ]; then
+        echo "Preparing the startup cache (once per build, a few seconds)..."
+        "$JAVA" "$@" ru.AotTraining files/BIOGame_RUS.tlk >/dev/null 2>&1 \
+            || echo "Could not prepare the startup cache; starting without it." >&2
     fi
 fi
 

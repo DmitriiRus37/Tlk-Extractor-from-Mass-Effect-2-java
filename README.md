@@ -145,7 +145,10 @@ Run the GUI:
   bundled sample to every format and back) and records `target/tlk-extractor.aot`; every start
   then uses it. On the bundled sample JavaFX startup drops from ~580 to ~300 ms and a cold
   load/export/import round of all formats from ~835 to ~610 ms. The cache is recorded again when
-  the JDK, the jar or the class path changes; `TLK_NO_AOT=1 ./run.sh` starts without it.
+  the JDK, the jar or the class path changes; `TLK_NO_AOT=1 ./run.sh` starts without it. On
+  JDK 21-24, which have no AOT cache, the training run records a dynamic CDS archive
+  (`target/tlk-extractor.jsa`) instead, which speeds up JavaFX startup (~525 → ~370 ms, measured
+  on JDK 25) but not the conversions.
 
 Maven uses the JDK in `JAVA_HOME` (check with `mvn -v`); point it at another JDK to switch, e.g.
 `JAVA_HOME=/path/to/jdk-21 mvn javafx:run`.
