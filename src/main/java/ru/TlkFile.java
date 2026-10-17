@@ -766,13 +766,14 @@ public class TlkFile {
      * <p>A child value {@code >= 0} is the index of another node; a negative value {@code v} is a
      * leaf for the character {@code (char) (-1 - v)} (see {@link TlkFile#leafCharacter(int)}), so
      * {@code -1} is the {@code '\0'} terminator and {@code -33} is a space. While decoding, a 0
-     * bit follows {@link #leftNodeId} and a 1 bit follows {@link #rightNodeId}.
+     * bit follows {@link #leftNodeId()} and a 1 bit follows {@link #rightNodeId()}.
+     *
+     * @param leftNodeId  child taken on a 0 bit: node index, or {@code -1 - c} for a leaf with
+     *                    character {@code c}
+     * @param rightNodeId child taken on a 1 bit: node index, or {@code -1 - c} for a leaf with
+     *                    character {@code c}
      */
-    public static class HuffmanNode {
-        /** Child taken on a 0 bit: node index, or {@code -1 - c} for a leaf with character {@code c}. */
-        public int leftNodeId;
-        /** Child taken on a 1 bit: node index, or {@code -1 - c} for a leaf with character {@code c}. */
-        public int rightNodeId;
+    public record HuffmanNode(int leftNodeId, int rightNodeId) {
 
         /**
          * Reads one node: the left child, then the right child.
@@ -781,19 +782,7 @@ public class TlkFile {
          * @throws IOException if reading fails or the stream ends inside the node
          */
         public HuffmanNode(InputStream r) throws IOException {
-            this.leftNodeId = readInt32(r);
-            this.rightNodeId = readInt32(r);
-        }
-
-        /**
-         * Creates a node to be written.
-         *
-         * @param leftNodeId  child for a 0 bit
-         * @param rightNodeId child for a 1 bit
-         */
-        public HuffmanNode(int leftNodeId, int rightNodeId) {
-            this.leftNodeId = leftNodeId;
-            this.rightNodeId = rightNodeId;
+            this(readInt32(r), readInt32(r));
         }
 
         /**

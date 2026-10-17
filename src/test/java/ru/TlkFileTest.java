@@ -193,8 +193,8 @@ class TlkFileTest {
         @Test
         void huffmanNodeReadsLeftThenRight() throws IOException {
             TlkFile.HuffmanNode n = new TlkFile.HuffmanNode(in(TlkTestFile.intsLE(3, -33)));
-            assertEquals(3, n.leftNodeId);
-            assertEquals(-33, n.rightNodeId);
+            assertEquals(3, n.leftNodeId());
+            assertEquals(-33, n.rightNodeId());
             assertThrows(EOFException.class, () -> new TlkFile.HuffmanNode(in(new byte[7])));
         }
 
@@ -214,7 +214,7 @@ class TlkFileTest {
             assertEquals(TlkFile.TlkHeader.MIN_VERSION, h.minVer);
             assertEquals(7, h.dataLen);
             assertEquals(-2147319074, new TlkFile.TlkStringRef(back).stringId);
-            assertEquals(-33, new TlkFile.HuffmanNode(back).rightNodeId);
+            assertEquals(-33, new TlkFile.HuffmanNode(back).rightNodeId());
         }
 
         @Test

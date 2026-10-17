@@ -67,8 +67,8 @@ final class HuffmanDecoder {
         this.data = data;
         tree = new int[2 * nodes.size()];
         for (int i = 0; i < nodes.size(); i++) {
-            tree[2 * i] = nodes.get(i).leftNodeId;
-            tree[2 * i + 1] = nodes.get(i).rightNodeId;
+            tree[2 * i] = nodes.get(i).leftNodeId();
+            tree[2 * i + 1] = nodes.get(i).rightNodeId();
         }
         if (useTables && !nodes.isEmpty()) {
             int entries = nodes.size() << 8;

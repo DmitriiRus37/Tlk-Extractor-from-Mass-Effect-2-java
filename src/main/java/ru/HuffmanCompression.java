@@ -321,16 +321,16 @@ class HuffmanCompression {
                 case TXT -> TxtFormat.read(path);
                 case CSV -> CsvFormat.read(path);
             };
-            inputFileVersion = input.toolVersion;
-            TlkEntry[] entries = new TlkEntry[input.entries.size()];
+            inputFileVersion = input.toolVersion();
+            TlkEntry[] entries = new TlkEntry[input.entries().size()];
             boolean sorted = true;
             for (int i = 0; i < entries.length; i++) {
-                entries[i] = prepareEntry(input.entries.get(i), debugVersion);
-                sorted &= i == 0 || entries[i - 1].position <= entries[i].position;
+                entries[i] = prepareEntry(input.entries().get(i), debugVersion);
+                sorted &= i == 0 || entries[i - 1].position() <= entries[i].position();
             }
             // the exported files are in position order; only edited ones need sorting (a stable sort)
             if (!sorted) {
-                Arrays.sort(entries, Comparator.comparingInt(e -> e.position));
+                Arrays.sort(entries, Comparator.comparingInt(TlkEntry::position));
             }
             inputData.addAll(Arrays.asList(entries));
             checkIdOccurrences(fileName);
@@ -352,14 +352,14 @@ class HuffmanCompression {
      *         prepared text
      */
     private static TlkEntry prepareEntry(TlkEntry entry, boolean debugVersion) {
-        if (entry.data == null) {
+        if (entry.data() == null) {
             return entry;
         }
-        String data = entry.data.indexOf('\r') < 0 ? entry.data : entry.data.replace(CRLF, "\n");
-        if (debugVersion && entry.stringId >= 0 && (entry.stringId & NON_LOCALIZABLE_FLAG) == 0) {
-            data = "(#" + entry.stringId + ") " + data;
+        String data = entry.data().indexOf('\r') < 0 ? entry.data() : entry.data().replace(CRLF, "\n");
+        if (debugVersion && entry.stringId() >= 0 && (entry.stringId() & NON_LOCALIZABLE_FLAG) == 0) {
+            data = "(#" + entry.stringId() + ") " + data;
         }
-        return data == entry.data ? entry : new TlkEntry(entry.stringId, entry.position, data);
+        return data == entry.data() ? entry : new TlkEntry(entry.stringId(), entry.position(), data);
     }
 
     /**
@@ -437,7 +437,7 @@ class HuffmanCompression {
         for (boolean section : new boolean[]{false, true}) {
             for (int i = 0; i < entryCount; i++) {
                 if (female[i] == section) {
-                    head.putInt(inputData.get(i).stringId).putInt(entryText[i] < 0 ? -1 : offsets[entryText[i]]);
+                    head.putInt(inputData.get(i).stringId()).putInt(entryText[i] < 0 ? -1 : offsets[entryText[i]]);
                 }
             }
         }
@@ -584,18 +584,18 @@ class HuffmanCompression {
         femaleCount = 0;
         for (int i = 0; i < inputData.size(); i++) {
             TlkEntry entry = inputData.get(i);
-            int count = ++occurrences[ids.add(entry.stringId)];
+            int count = ++occurrences[ids.add(entry.stringId())];
             if (count == 2) {
                 female[i] = true;
                 femaleCount++;
             } else if (count > 2) {
                 List<Integer> positions = new ArrayList<>();
                 for (TlkEntry e : inputData) {
-                    if (e.stringId == entry.stringId) {
-                        positions.add(e.position);
+                    if (e.stringId() == entry.stringId()) {
+                        positions.add(e.position());
                     }
                 }
-                throw new IOException("String id " + entry.stringId + " occurs " + positions.size()
+                throw new IOException("String id " + entry.stringId() + " occurs " + positions.size()
                         + " times (positions " + positions + "), but a TLK file can only hold a male and a "
                         + "female variant of a string: " + fileName);
             }
@@ -625,7 +625,7 @@ class HuffmanCompression {
         StringBuilder order = new StringBuilder();
         char[] chars = new char[256];
         for (int e = 0; e < entryText.length; e++) {
-            String text = inputData.get(e).data;
+            String text = inputData.get(e).data();
             if (text == null) {
                 entryText[e] = -1;
                 continue;

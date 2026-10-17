@@ -14,29 +14,16 @@ import java.util.List;
  * tool version it declares and its entries in file order, with the texts exactly as stored (no
  * line-break normalization, no debug prefix; {@link HuffmanCompression} applies those to every
  * format alike). Also holds small helpers shared by the TXT and CSV readers.
+ *
+ * @param toolVersion {@code TLKToolVersion} declared by the file
+ * @param entries     the entries in file order
  */
-final class InputFile {
+record InputFile(String toolVersion, List<TlkEntry> entries) {
 
     /** Byte order mark, which some editors (Notepad, Excel) put at the start of UTF-8 files. */
     static final char BOM = '﻿';
     /** Longest piece of a malformed line quoted in an error message. */
     private static final int MAX_QUOTE = 40;
-
-    /** {@code TLKToolVersion} declared by the file. */
-    final String toolVersion;
-    /** The entries in file order. */
-    final List<TlkEntry> entries;
-
-    /**
-     * Creates the content of a file.
-     *
-     * @param toolVersion declared tool version
-     * @param entries     entries in file order
-     */
-    InputFile(String toolVersion, List<TlkEntry> entries) {
-        this.toolVersion = toolVersion;
-        this.entries = entries;
-    }
 
     /**
      * Reads a whole UTF-8 text file, dropping a leading byte order mark.

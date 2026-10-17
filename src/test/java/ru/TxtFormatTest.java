@@ -51,16 +51,16 @@ class TxtFormatTest {
 
     private static List<String> texts(InputFile in) {
         List<String> result = new ArrayList<>();
-        for (TlkEntry e : in.entries) {
-            result.add(e.data);
+        for (TlkEntry e : in.entries()) {
+            result.add(e.data());
         }
         return result;
     }
 
     private static List<Integer> ids(InputFile in) {
         List<Integer> result = new ArrayList<>();
-        for (TlkEntry e : in.entries) {
-            result.add(e.stringId);
+        for (TlkEntry e : in.entries()) {
+            result.add(e.stringId());
         }
         return result;
     }
@@ -162,11 +162,11 @@ class TxtFormatTest {
         @Test
         void readsIdsTextsAndLineOrderAsPositions() throws IOException {
             InputFile in = read(HEADER + "100: Hello\n-7: \\N\n101: Привет, мир!\n100: two\\nlines\n");
-            assertEquals("1.0.4", in.toolVersion);
+            assertEquals("1.0.4", in.toolVersion());
             assertEquals(Arrays.asList(100, -7, 101, 100), ids(in));
             assertEquals(Arrays.asList("Hello", null, "Привет, мир!", "two\nlines"), texts(in));
-            for (int i = 0; i < in.entries.size(); i++) {
-                assertEquals(i, in.entries.get(i).position);
+            for (int i = 0; i < in.entries().size(); i++) {
+                assertEquals(i, in.entries().get(i).position());
             }
         }
 
@@ -186,7 +186,7 @@ class TxtFormatTest {
         void commentsAndBlankLinesAreSkipped() throws IOException {
             InputFile in = read(HEADER + "# Male entries section begin\n\n   \n\t\n1: a\n#2: not an entry\n2: b\n\n\n");
             assertEquals(Arrays.asList(1, 2), ids(in));
-            assertEquals(1, in.entries.get(1).position);
+            assertEquals(1, in.entries().get(1).position());
         }
 
         @Test
@@ -210,8 +210,8 @@ class TxtFormatTest {
             }
             long start = System.nanoTime();
             InputFile in = read(content.toString());
-            assertEquals(200_000, in.entries.size());
-            assertEquals("text 199999", in.entries.get(199_999).data);
+            assertEquals(200_000, in.entries().size());
+            assertEquals("text 199999", in.entries().get(199_999).data());
             assertTrue(System.nanoTime() - start < 10_000_000_000L, "took " + (System.nanoTime() - start) / 1e9 + " s");
         }
 
@@ -230,9 +230,9 @@ class TxtFormatTest {
 
         @Test
         void headerMayHaveSpacesAndANewerVersion() throws IOException {
-            assertEquals("2.0", read("#  TLKToolVersion = 2.0 \n1: a\n").toolVersion);
-            assertEquals("1.0.3", read("#TLKToolVersion=1.0.3").toolVersion);
-            assertTrue(read("#TLKToolVersion=1.0.3").entries.isEmpty());
+            assertEquals("2.0", read("#  TLKToolVersion = 2.0 \n1: a\n").toolVersion());
+            assertEquals("1.0.3", read("#TLKToolVersion=1.0.3").toolVersion());
+            assertTrue(read("#TLKToolVersion=1.0.3").entries().isEmpty());
         }
 
         @Test

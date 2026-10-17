@@ -49,16 +49,16 @@ class CsvFormatTest {
 
     private static List<String> texts(InputFile in) {
         List<String> result = new ArrayList<>();
-        for (TlkEntry e : in.entries) {
-            result.add(e.data);
+        for (TlkEntry e : in.entries()) {
+            result.add(e.data());
         }
         return result;
     }
 
     private static List<String> idsAndPositions(InputFile in) {
         List<String> result = new ArrayList<>();
-        for (TlkEntry e : in.entries) {
-            result.add(e.stringId + "@" + e.position);
+        for (TlkEntry e : in.entries()) {
+            result.add(e.stringId() + "@" + e.position());
         }
         return result;
     }
@@ -127,7 +127,7 @@ class CsvFormatTest {
         @Test
         void readsVersionAndEntries() throws IOException {
             InputFile in = read(HEAD + "100,0,true,Hello\r\n-7,1,false,\r\n101,2,true,Привет\r\n100,3,true,\r\n");
-            assertEquals("1.0.4", in.toolVersion);
+            assertEquals("1.0.4", in.toolVersion());
             assertEquals(Arrays.asList("100@0", "-7@1", "101@2", "100@3"), idsAndPositions(in));
             assertEquals(Arrays.asList("Hello", null, "Привет", ""), texts(in));
         }
@@ -138,7 +138,7 @@ class CsvFormatTest {
                     + "4,3,true,\"lf\nonly\"\r\n5,4,true,\"cr\ronly\"\r\n6,5,true,\"\"\r\n7,6,true,\"\"\"\"\r\n"
                     + "\"8\",\"7\",\"true\",\"quoted\"\r\n");
             assertEquals(Arrays.asList("a,b", "say \"hi\"", "x\r\ny", "lf\nonly", "cr\ronly", "", "\"", "quoted"), texts(in));
-            assertEquals(7, in.entries.get(7).position);
+            assertEquals(7, in.entries().get(7).position());
         }
 
         @Test
@@ -180,8 +180,8 @@ class CsvFormatTest {
 
         @Test
         void headerOnlyGivesNoEntries() throws IOException {
-            assertTrue(read(HEAD).entries.isEmpty());
-            assertEquals("2.1", read("TLKToolVersion, 2.1 \r\nid,position,hasText,text").toolVersion);
+            assertTrue(read(HEAD).entries().isEmpty());
+            assertEquals("2.1", read("TLKToolVersion, 2.1 \r\nid,position,hasText,text").toolVersion());
         }
     }
 

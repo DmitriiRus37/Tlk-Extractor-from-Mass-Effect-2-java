@@ -131,7 +131,7 @@ class TlkFileSampleTest {
         int[] referenced = new int[tree.size()];
         Set<Integer> leaves = new HashSet<>();
         for (TlkFile.HuffmanNode node : tree) {
-            for (int child : new int[]{node.leftNodeId, node.rightNodeId}) {
+            for (int child : new int[]{node.leftNodeId(), node.rightNodeId()}) {
                 if (child >= 0) {
                     assertTrue(child > 0 && child < tree.size(), "bad child " + child);
                     referenced[child]++;
