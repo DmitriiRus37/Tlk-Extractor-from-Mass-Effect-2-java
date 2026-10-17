@@ -20,7 +20,7 @@
         <javafx.version>27</javafx.version>
 
         <!-- test dependencies -->
-        <junit-jupiter.version>5.14.4</junit-jupiter.version>
+        <junit-jupiter.version>6.1.3</junit-jupiter.version>
 
         <!-- plugins -->
         <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
