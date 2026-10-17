@@ -76,6 +76,18 @@ public class TlkFile {
     private static final long MAX_BODY_SIZE = Integer.MAX_VALUE - 8;
     /** Number of entries {@link #storeToFile(String, FileFormat, DoubleConsumer)} formats per task. */
     private static final int EXPORT_CHUNK = 2048;
+    /**
+     * Characters an XML entry has besides its text, for sizing export buffers: the indented
+     * {@code <string>}, {@code <id>}, {@code <position>} and {@code <data>} lines, with an 11-digit
+     * id and a 6-digit position, take about 114. Only an estimate: a buffer grows if it is short.
+     */
+    private static final int XML_MARKUP_CHARS = 112;
+    /**
+     * Characters a TXT or CSV entry has besides its text, for sizing export buffers: id,
+     * {@code ": "} and CRLF in TXT (about 15), id, position, {@code true}, commas, quotes and CRLF
+     * in CSV (up to about 29).
+     */
+    private static final int TEXT_MARKUP_CHARS = 32;
 
     /** Header of the loaded file; {@code null} until {@link #loadTlkData(String)} succeeds. */
     private TlkHeader header;
@@ -422,7 +434,8 @@ public class TlkFile {
     private static ByteBuffer formatChunk(FileFormat format, TlkStringRef[] refs, int start, int end, int maleCount,
                                           int lastPosition) {
         // room for the texts plus the markup around them, so that the buffer rarely has to grow
-        long capacity = 256 + (long) (end - start) * (format == FileFormat.XML ? 112 : 32);
+        int markup = format == FileFormat.XML ? XML_MARKUP_CHARS : TEXT_MARKUP_CHARS;
+        long capacity = 256 + (long) (end - start) * markup;
         for (int i = start; i < end; i++) {
             if (refs[i].data != null) {
                 capacity += refs[i].data.length();
