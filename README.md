@@ -140,10 +140,12 @@ Run the GUI:
 - `mvn javafx:run` (puts JavaFX on the module path).
 - Faster on macOS/Linux: `./run.sh` starts the GUI from the jar with plain `java` (Maven runs
   only when the jar is missing or `src/` or `pom.xml` changed). On JDK 25+ it also uses an
-  [AOT cache](https://openjdk.org/jeps/514): the first start after a build records it into
-  `target/tlk-extractor.aot` when you close the window, and later starts are faster (JavaFX
-  startup ~370 → ~205 ms, a cold load/export/import of all formats ~1000 → ~780 ms on the bundled
-  sample). `TLK_NO_AOT=1 ./run.sh` starts without the cache.
+  [AOT cache](https://openjdk.org/jeps/514): after each build it first spends a few seconds on a
+  hidden training run (`ru.AotTraining`: builds the window without showing it and converts the
+  bundled sample to every format and back) and records `target/tlk-extractor.aot`; every start
+  then uses it. On the bundled sample JavaFX startup drops from ~580 to ~300 ms and a cold
+  load/export/import round of all formats from ~835 to ~610 ms. The cache is recorded again when
+  the JDK, the jar or the class path changes; `TLK_NO_AOT=1 ./run.sh` starts without it.
 
 Maven uses the JDK in `JAVA_HOME` (check with `mvn -v`); point it at another JDK to switch, e.g.
 `JAVA_HOME=/path/to/jdk-21 mvn javafx:run`.

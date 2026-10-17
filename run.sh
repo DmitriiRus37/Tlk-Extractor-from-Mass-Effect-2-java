@@ -6,11 +6,11 @@
 #   deleted and renamed files count).
 # - Needs Java 21+ and runs the JDK in JAVA_HOME, as Maven does, or else the one "java" on the
 #   PATH runs; puts the OpenJFX jars on the module path, as "mvn javafx:run" does.
-# - On JDK 25+ uses an AOT cache (JEP 483/514/515): the first start after a build records which
-#   classes and methods the app uses and writes target/tlk-extractor.aot when the window is
-#   closed; later starts load and link those classes from the cache and JIT-compile sooner.
-#   On BIOGame_RUS.tlk this cut JavaFX startup from ~370 to ~205 ms and a cold
-#   load/export/import round of all formats from ~1000 to ~780 ms.
+# - On JDK 25+ uses an AOT cache (JEP 483/514/515): the first start after a build first runs
+#   ru.AotTraining, which builds the window without showing it and converts the bundled
+#   files/BIOGame_RUS.tlk to every format and back, and records which classes and methods that
+#   uses in target/tlk-extractor.aot (a few seconds, once); every start then loads and links those
+#   classes from the cache and JIT-compiles sooner.
 #   The cache is recorded again whenever the JDK, the jar or the class path changes (an AOT
 #   cache only checks the jar's size, so a stale one could run old code). Set TLK_NO_AOT=1 to
 #   start without the cache.
@@ -68,13 +68,19 @@ if [ "$JAVA_MAJOR" -ge 25 ] && [ -z "$TLK_NO_AOT" ]; then
     if [ "$(cat "$AOT_KEY" 2>/dev/null)" != "$KEY" ]; then
         rm -f "$AOT_CACHE"
     fi
+    if [ ! -f "$AOT_CACHE" ]; then
+        echo "Preparing the startup cache (once per build, a few seconds)..."
+        # the recording run warns about every class it cannot cache (proxies, JFR events)
+        if "$JAVA" -XX:AOTCacheOutput="$AOT_CACHE" -Xlog:aot=error "$@" ru.AotTraining files/BIOGame_RUS.tlk \
+                >/dev/null 2>&1; then
+            echo "$KEY" > "$AOT_KEY"
+        else
+            echo "Could not prepare the startup cache; starting without it." >&2
+            rm -f "$AOT_CACHE"
+        fi
+    fi
     if [ -f "$AOT_CACHE" ]; then
         set -- -XX:AOTCache="$AOT_CACHE" "$@"
-    else
-        echo "Recording the AOT cache: it is written when you close the window, and later starts are faster."
-        # the recording run warns about every class it cannot cache (proxies, JFR events)
-        set -- -XX:AOTCacheOutput="$AOT_CACHE" -Xlog:aot=error "$@"
-        echo "$KEY" > "$AOT_KEY"
     fi
 fi
 

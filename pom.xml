@@ -214,7 +214,7 @@
                             <goal>check</goal>
                         </goals>
                         <configuration>
-                            <!-- The GUI classes are left out of the threshold: their tests need a JavaFX
+                            <!-- The GUI classes (and AotTraining, which starts JavaFX) are left out of the threshold: their tests need a JavaFX
                                  toolkit and are skipped where none can start (no display and no headless
                                  Glass platform, which only JavaFX 25+ has), and the file-chooser handlers
                                  cannot be exercised headlessly at all. They still appear in the report. -->
@@ -223,6 +223,8 @@
                                 <exclude>ru/App$*.class</exclude>
                                 <exclude>ru/FxmlController.class</exclude>
                                 <exclude>ru/FxmlController$*.class</exclude>
+                                <exclude>ru/AotTraining.class</exclude>
+                                <exclude>ru/AotTraining$*.class</exclude>
                             </excludes>
                             <rules>
                                 <rule>
