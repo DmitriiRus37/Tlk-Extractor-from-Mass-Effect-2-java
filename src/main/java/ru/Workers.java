@@ -8,7 +8,8 @@ import java.util.concurrent.ForkJoinPool;
 
 /**
  * The thread pool for the parallel parts of the conversions (decoding in {@link TlkFile}, text
- * export, Huffman encoding in {@link HuffmanCompression}, TXT and CSV parsing).
+ * export and Huffman encoding in {@link HuffmanCompression}). Parsing TXT and CSV in parallel was
+ * tried and dropped: it was faster warm but up to 70 ms slower cold.
  *
  * <p>It has at most {@value #MAX_THREADS} threads rather than one per core: the tool usually
  * runs one conversion per JVM, before the JIT has compiled anything, and on a 14-core machine

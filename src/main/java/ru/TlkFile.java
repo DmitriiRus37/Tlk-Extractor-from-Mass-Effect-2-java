@@ -140,9 +140,17 @@ public class TlkFile {
                 throw new IOException("TLK file too large (the header announces " + newHeader.expectedFileSize()
                         + " bytes): " + fileName);
             }
-            byte[] body = new byte[(int) bodySize];
-            in.readFully(body);
-            ByteBuffer buffer = ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN);
+            // string refs and tree in one array, the data block in its own (it is kept, not copied)
+            byte[] tables = new byte[(int) (bodySize - newHeader.dataLen)];
+            byte[] data = new byte[newHeader.dataLen];
+            try {
+                in.readFully(tables);
+                in.readFully(data);
+            } catch (EOFException e) {
+                // the size was checked against the header, so the file changed while being read
+                throw new EOFException("TLK file ended while it was being read (did it change?): " + fileName);
+            }
+            ByteBuffer buffer = ByteBuffer.wrap(tables).order(ByteOrder.LITTLE_ENDIAN);
 
             int refCount = newHeader.entry1Count + newHeader.entry2Count;
             int[] refInts = new int[2 * refCount];
@@ -161,7 +169,6 @@ public class TlkFile {
             }
             checkTree(tree, fileName);
 
-            byte[] data = Arrays.copyOfRange(body, buffer.position(), body.length);
             BitArray newBits = BitArray.wrap(data);
 
             decodeStrings(refs, tree, data, fileName);
