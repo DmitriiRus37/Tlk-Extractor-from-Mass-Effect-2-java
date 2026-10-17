@@ -316,20 +316,11 @@ class HuffmanCompression {
         reset();
         try {
             Path path = Paths.get(fileName);
-            InputFile input;
-            switch (format) {
-                case XML:
-                    input = XmlFormat.read(path);
-                    break;
-                case TXT:
-                    input = TxtFormat.read(path);
-                    break;
-                case CSV:
-                    input = CsvFormat.read(path);
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unsupported input format: " + format);
-            }
+            InputFile input = switch (format) {
+                case XML -> XmlFormat.read(path);
+                case TXT -> TxtFormat.read(path);
+                case CSV -> CsvFormat.read(path);
+            };
             inputFileVersion = input.toolVersion;
             TlkEntry[] entries = new TlkEntry[input.entries.size()];
             boolean sorted = true;

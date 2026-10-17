@@ -252,11 +252,7 @@ public class BitArray {
         if (obj == this) {
             return true;
         }
-        if (!(obj instanceof BitArray)) {
-            return false;
-        }
-        BitArray ba = (BitArray) obj;
-        return ba.length == length && Arrays.equals(repn, ba.repn);
+        return obj instanceof BitArray ba && ba.length == length && Arrays.equals(repn, ba.repn);
     }
 
     /**

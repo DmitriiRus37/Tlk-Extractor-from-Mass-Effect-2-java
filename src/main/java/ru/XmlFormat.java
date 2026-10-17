@@ -333,19 +333,13 @@ final class XmlFormat {
         int depth = 1;
         while (depth > 0) {
             switch (reader.next()) {
-                case XMLStreamConstants.START_ELEMENT:
-                    depth++;
-                    break;
-                case XMLStreamConstants.END_ELEMENT:
-                    depth--;
-                    break;
-                case XMLStreamConstants.CHARACTERS:
-                case XMLStreamConstants.CDATA:
-                case XMLStreamConstants.SPACE:
-                    text.append(reader.getText());
-                    break;
-                default:
-                    break;
+                case XMLStreamConstants.START_ELEMENT -> depth++;
+                case XMLStreamConstants.END_ELEMENT -> depth--;
+                case XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA, XMLStreamConstants.SPACE ->
+                        text.append(reader.getText());
+                default -> {
+                    // comments and processing instructions are not part of the text
+                }
             }
         }
         return text.toString();

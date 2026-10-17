@@ -332,7 +332,6 @@ public class TlkFile {
         if (stringRefs == null) {
             throw new IllegalStateException("No TLK file loaded; call loadTlkData first");
         }
-        formatWriter(format, new TextBuffer());
         ProgressReporter reporter = new ProgressReporter(progress, stringRefs.size());
         try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Paths.get(fileName)))) {
             write(format, out, reporter);
@@ -346,19 +345,13 @@ public class TlkFile {
      * @param format the format
      * @param out    destination
      * @return the writer
-     * @throws IllegalArgumentException if the format is not supported
      */
     private static FormatWriter formatWriter(FileFormat format, Writer out) {
-        switch (format) {
-            case XML:
-                return XmlFormat.writer(out);
-            case TXT:
-                return TxtFormat.writer(out);
-            case CSV:
-                return CsvFormat.writer(out);
-            default:
-                throw new IllegalArgumentException("Unsupported output format: " + format);
-        }
+        return switch (format) {
+            case XML -> XmlFormat.writer(out);
+            case TXT -> TxtFormat.writer(out);
+            case CSV -> CsvFormat.writer(out);
+        };
     }
 
     /**

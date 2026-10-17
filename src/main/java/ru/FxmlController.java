@@ -430,13 +430,13 @@ public class FxmlController {
      * @return a description of what went wrong
      */
     static String describe(Throwable error) {
-        if (error instanceof NoSuchFileException) {
-            return "file not found: " + error.getMessage();
-        }
-        if (error instanceof AccessDeniedException) {
-            return "access denied: " + error.getMessage();
-        }
-        String message = error.getMessage();
-        return message == null || message.isEmpty() ? error.getClass().getSimpleName() : message;
+        return switch (error) {
+            case NoSuchFileException e -> "file not found: " + e.getMessage();
+            case AccessDeniedException e -> "access denied: " + e.getMessage();
+            default -> {
+                String message = error.getMessage();
+                yield message == null || message.isEmpty() ? error.getClass().getSimpleName() : message;
+            }
+        };
     }
 }

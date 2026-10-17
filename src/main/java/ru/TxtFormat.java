@@ -379,26 +379,17 @@ final class TxtFormat {
             }
             char next = text.charAt(++i);
             switch (next) {
-                case '\\':
-                    sb.append('\\');
-                    break;
-                case 'n':
-                    sb.append('\n');
-                    break;
-                case 'r':
-                    sb.append('\r');
-                    break;
-                case 't':
-                    sb.append('\t');
-                    break;
-                case 'u':
+                case '\\' -> sb.append('\\');
+                case 'n' -> sb.append('\n');
+                case 'r' -> sb.append('\r');
+                case 't' -> sb.append('\t');
+                case 'u' -> {
                     sb.append(parseHex(text, i + 1, column, lineNumber, file));
                     i += 4;
-                    break;
-                default:
-                    throw InputFile.error("Invalid escape sequence \"\\" + next + "\" at column " + column
-                            + (next == 'N' ? " (\\N for \"no text\" must be the whole text)" : "")
-                            + " (valid: \\\\ \\n \\r \\t \\uXXXX)", lineNumber, file);
+                }
+                default -> throw InputFile.error("Invalid escape sequence \"\\" + next + "\" at column " + column
+                        + (next == 'N' ? " (\\N for \"no text\" must be the whole text)" : "")
+                        + " (valid: \\\\ \\n \\r \\t \\uXXXX)", lineNumber, file);
             }
         }
         return sb.toString();
