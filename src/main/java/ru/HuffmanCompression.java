@@ -1,8 +1,9 @@
 package ru;
 
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -445,17 +446,20 @@ class HuffmanCompression {
 
         int[] tree = treeToBuffer();
         TlkFile.TlkHeader header = new TlkFile.TlkHeader(male.size(), female.size(), tree.length / 2, bytes.length);
-        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Paths.get(fileName)))) {
-            header.write(out);
-            for (TlkFile.TlkStringRef ref : male) {
-                ref.write(out);
-            }
-            for (TlkFile.TlkStringRef ref : female) {
-                ref.write(out);
-            }
-            for (int child : tree) {
-                TlkFile.writeInt32(out, child);
-            }
+        // header, string refs and tree as one little-endian block, then the data block
+        ByteBuffer head = ByteBuffer.allocate(TlkFile.TlkHeader.SIZE + 8 * (male.size() + female.size())
+                + Integer.BYTES * tree.length).order(ByteOrder.LITTLE_ENDIAN);
+        head.putInt(header.magic).putInt(header.ver).putInt(header.minVer).putInt(header.entry1Count)
+                .putInt(header.entry2Count).putInt(header.treeNodeCount).putInt(header.dataLen);
+        for (TlkFile.TlkStringRef ref : male) {
+            head.putInt(ref.stringId).putInt(ref.bitOffset);
+        }
+        for (TlkFile.TlkStringRef ref : female) {
+            head.putInt(ref.stringId).putInt(ref.bitOffset);
+        }
+        head.asIntBuffer().put(tree);
+        try (OutputStream out = Files.newOutputStream(Paths.get(fileName))) {
+            out.write(head.array());
             out.write(bytes);
         }
         reporter.finish();
