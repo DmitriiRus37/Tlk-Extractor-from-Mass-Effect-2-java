@@ -322,7 +322,8 @@ public class TlkFile {
      * {@link TxtFormat} and {@link FileFormat#CSV} the RFC 4180 table described in
      * {@link CsvFormat}. Entries keep their file order (male section, then female); each format
      * records the tool version {@value #TOOL_VERSION}, every entry's id and position, and whether
-     * it has text. If writing fails, the output file may be left incomplete.
+     * it has text. The file is replaced only once it is complete ({@link OutputFile}): if writing
+     * fails, an existing file is left unchanged and no partial file is created.
      *
      * @param fileName path of the output file
      * @param format   output format
@@ -340,9 +341,11 @@ public class TlkFile {
             throw new IllegalStateException("No TLK file loaded; call loadTlkData first");
         }
         ProgressReporter reporter = new ProgressReporter(progress, stringRefs.size());
-        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(Paths.get(fileName)))) {
-            write(format, out, reporter);
-        }
+        OutputFile.write(Paths.get(fileName), out -> {
+            try (OutputStream buffered = new BufferedOutputStream(out)) {
+                write(format, buffered, reporter);
+            }
+        });
         reporter.finish();
     }
 

@@ -556,10 +556,12 @@ class TlkFileTest {
             // U+0001 is not allowed in XML 1.0, not even as a character reference
             for (String text : new String[]{"bell\u0001", "lone \ud800 surrogate", "low \udc00", "end\ud800", "\ufffe", "\uffff"}) {
                 TlkFile t = load(new TlkTestFile().male(7, "ok").male(42, text));
-                String target = dir.resolve("control.xml").toString();
-                IOException e = assertThrows(IOException.class, () -> t.storeToFile(target, FileFormat.XML, null));
+                Path target = TestSupport.writeUtf8(dir.resolve("control.xml"), "previous export");
+                IOException e = assertThrows(IOException.class, () -> t.storeToFile(target.toString(), FileFormat.XML, null));
                 assertTrue(e.getMessage().startsWith("String 42 (position 1) cannot be written as XML: it contains the character U+"),
                         e.getMessage());
+                // the failed export leaves the old file as it was
+                assertEquals("previous export", TestSupport.readUtf8(target));
             }
         }
 

@@ -1,10 +1,8 @@
 package ru;
 
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayDeque;
@@ -402,7 +400,8 @@ class HuffmanCompression {
     }
 
     /**
-     * Encodes the loaded entries and writes them as a TLK file, replacing any existing file.
+     * Encodes the loaded entries and writes them as a TLK file, replacing any existing file once
+     * the new one is complete ({@link OutputFile}).
      * The data must have been loaded with {@link #loadInputData(String, FileFormat, boolean)};
      * without it, a TLK file without entries is written.
      *
@@ -442,10 +441,10 @@ class HuffmanCompression {
             }
         }
         head.asIntBuffer().put(tree);
-        try (OutputStream out = Files.newOutputStream(Paths.get(fileName))) {
+        OutputFile.write(Paths.get(fileName), out -> {
             out.write(head.array());
             out.write(bytes);
-        }
+        });
         reporter.finish();
     }
 
