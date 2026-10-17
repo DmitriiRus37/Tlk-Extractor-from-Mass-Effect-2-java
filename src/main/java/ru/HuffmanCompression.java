@@ -13,13 +13,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.DoubleConsumer;
 
@@ -92,6 +89,14 @@ class HuffmanCompression {
      * {@link #huffmanCodes} instead); {@code null} until a tree is built.
      */
     private int[] codeLength;
+    /** The distinct texts of the entries, in order of first occurrence; the data block's order. */
+    private final List<String> distinctTexts = new ArrayList<>();
+    /** Per entry of {@link #inputData}: the index of its text in {@link #distinctTexts}, or {@code -1}. */
+    private int[] entryText = new int[0];
+    /** Per entry of {@link #inputData}: whether it is the second entry of its id (female section). */
+    private boolean[] female = new boolean[0];
+    /** Number of {@code true} values in {@link #female}. */
+    private int femaleCount;
 
     /**
      * Creates an empty compressor; call {@link #loadInputData(String, FileFormat, boolean)}
@@ -326,10 +331,17 @@ class HuffmanCompression {
                     throw new IllegalArgumentException("Unsupported input format: " + format);
             }
             inputFileVersion = input.toolVersion;
-            for (TlkEntry entry : input.entries) {
-                inputData.add(prepareEntry(entry, debugVersion));
+            TlkEntry[] entries = new TlkEntry[input.entries.size()];
+            boolean sorted = true;
+            for (int i = 0; i < entries.length; i++) {
+                entries[i] = prepareEntry(input.entries.get(i), debugVersion);
+                sorted &= i == 0 || entries[i - 1].position <= entries[i].position;
             }
-            inputData.sort(Comparator.comparingInt(e -> e.position));
+            // the exported files are in position order; only edited ones need sorting (a stable sort)
+            if (!sorted) {
+                Arrays.sort(entries, Comparator.comparingInt(e -> e.position));
+            }
+            inputData.addAll(Arrays.asList(entries));
             checkIdOccurrences(fileName);
             prepareHuffmanCoding();
         } catch (IOException | RuntimeException e) {
@@ -345,17 +357,18 @@ class HuffmanCompression {
      *
      * @param entry        the entry as read from the file
      * @param debugVersion whether to add the debug prefix
-     * @return {@code entry} itself if it has no text, otherwise an entry with the prepared text
+     * @return {@code entry} itself if its text needs no change, otherwise an entry with the
+     *         prepared text
      */
     private static TlkEntry prepareEntry(TlkEntry entry, boolean debugVersion) {
         if (entry.data == null) {
             return entry;
         }
-        String data = entry.data.replace(CRLF, "\n");
+        String data = entry.data.indexOf('\r') < 0 ? entry.data : entry.data.replace(CRLF, "\n");
         if (debugVersion && entry.stringId >= 0 && (entry.stringId & NON_LOCALIZABLE_FLAG) == 0) {
             data = "(#" + entry.stringId + ") " + data;
         }
-        return new TlkEntry(entry.stringId, entry.position, data);
+        return data == entry.data ? entry : new TlkEntry(entry.stringId, entry.position, data);
     }
 
     /**
@@ -391,6 +404,10 @@ class HuffmanCompression {
         codeBits = null;
         codeLength = null;
         huffmanRoot = null;
+        distinctTexts.clear();
+        entryText = new int[0];
+        female = new boolean[0];
+        femaleCount = 0;
     }
 
     /**
@@ -413,49 +430,25 @@ class HuffmanCompression {
      */
     public void saveToTlkFile(String fileName, DoubleConsumer progress) throws IOException {
         ProgressReporter reporter = new ProgressReporter(progress, inputData.size());
-        // number the distinct texts in order of first occurrence
-        Map<String, Integer> indexByText = new HashMap<>();
-        List<String> texts = new ArrayList<>();
-        int[] textIndex = new int[inputData.size()];
-        for (int i = 0; i < textIndex.length; i++) {
-            String text = inputData.get(i).data;
-            if (text == null) {
-                textIndex[i] = -1;
-                continue;
-            }
-            Integer index = indexByText.putIfAbsent(text, texts.size());
-            if (index == null) {
-                index = texts.size();
-                texts.add(text);
-            }
-            textIndex[i] = index;
-        }
-
-        int[] offsets = new int[texts.size()];
-        byte[] bytes = encodeTexts(texts, offsets, textIndex, reporter);
-
-        List<TlkFile.TlkStringRef> male = new ArrayList<>();
-        List<TlkFile.TlkStringRef> female = new ArrayList<>();
-        Set<Integer> maleIds = new HashSet<>();
-        for (int i = 0; i < textIndex.length; i++) {
-            TlkEntry entry = inputData.get(i);
-            int offset = textIndex[i] < 0 ? -1 : offsets[textIndex[i]];
-            TlkFile.TlkStringRef ref = new TlkFile.TlkStringRef(entry.stringId, offset);
-            (maleIds.add(entry.stringId) ? male : female).add(ref);
-        }
+        int[] offsets = new int[distinctTexts.size()];
+        byte[] bytes = encodeTexts(distinctTexts, offsets, entryText, reporter);
 
         int[] tree = treeToBuffer();
-        TlkFile.TlkHeader header = new TlkFile.TlkHeader(male.size(), female.size(), tree.length / 2, bytes.length);
-        // header, string refs and tree as one little-endian block, then the data block
-        ByteBuffer head = ByteBuffer.allocate(TlkFile.TlkHeader.SIZE + 8 * (male.size() + female.size())
-                + Integer.BYTES * tree.length).order(ByteOrder.LITTLE_ENDIAN);
+        int entryCount = inputData.size();
+        TlkFile.TlkHeader header = new TlkFile.TlkHeader(entryCount - femaleCount, femaleCount, tree.length / 2,
+                bytes.length);
+        // header, string refs (male section, then female, each in position order) and tree as one
+        // little-endian block, then the data block
+        ByteBuffer head = ByteBuffer.allocate(TlkFile.TlkHeader.SIZE + 8 * entryCount + Integer.BYTES * tree.length)
+                .order(ByteOrder.LITTLE_ENDIAN);
         head.putInt(header.magic).putInt(header.ver).putInt(header.minVer).putInt(header.entry1Count)
                 .putInt(header.entry2Count).putInt(header.treeNodeCount).putInt(header.dataLen);
-        for (TlkFile.TlkStringRef ref : male) {
-            head.putInt(ref.stringId).putInt(ref.bitOffset);
-        }
-        for (TlkFile.TlkStringRef ref : female) {
-            head.putInt(ref.stringId).putInt(ref.bitOffset);
+        for (boolean section : new boolean[]{false, true}) {
+            for (int i = 0; i < entryCount; i++) {
+                if (female[i] == section) {
+                    head.putInt(inputData.get(i).stringId).putInt(entryText[i] < 0 ? -1 : offsets[entryText[i]]);
+                }
+            }
         }
         head.asIntBuffer().put(tree);
         try (OutputStream out = Files.newOutputStream(Paths.get(fileName))) {
@@ -579,15 +572,24 @@ class HuffmanCompression {
     }
 
     /**
-     * Checks that no string id occurs more than twice.
+     * Checks that no string id occurs more than twice, and marks the second entry of each id as
+     * belonging to the female section ({@link #female}, {@link #femaleCount}).
      *
      * @param fileName the file, for the error message
      * @throws IOException naming the first id found three times and its positions
      */
     private void checkIdOccurrences(String fileName) throws IOException {
-        Map<Integer, Integer> occurrences = new HashMap<>();
-        for (TlkEntry entry : inputData) {
-            if (occurrences.merge(entry.stringId, 1, Integer::sum) > 2) {
+        IntIndex ids = new IntIndex(inputData.size());
+        byte[] occurrences = new byte[inputData.size()];
+        female = new boolean[inputData.size()];
+        femaleCount = 0;
+        for (int i = 0; i < inputData.size(); i++) {
+            TlkEntry entry = inputData.get(i);
+            int count = ++occurrences[ids.add(entry.stringId)];
+            if (count == 2) {
+                female[i] = true;
+                femaleCount++;
+            } else if (count > 2) {
                 List<Integer> positions = new ArrayList<>();
                 for (TlkEntry e : inputData) {
                     if (e.stringId == entry.stringId) {
@@ -604,8 +606,10 @@ class HuffmanCompression {
     /**
      * Creates the Huffman tree and the code of every character from the loaded texts.
      *
-     * <p>Counts every character of every distinct text, plus one {@code '\0'} terminator per
-     * text, into {@link #frequencyCount} (entries without text are skipped), then builds the tree
+     * <p>Numbers the distinct texts in order of first occurrence ({@link #distinctTexts},
+     * {@link #entryText}; entries without text are skipped) and counts every character of every
+     * distinct text, plus one {@code '\0'} terminator per text, into {@link #frequencyCount}, then
+     * builds the tree
      * by repeatedly merging the two least frequent nodes (the less frequent one becomes the left
      * child; ties go to the node created first) and derives the codes
      * ({@link #buildCodes(HuffmanNode, boolean[], int)}). With a single distinct character, the
@@ -614,18 +618,31 @@ class HuffmanCompression {
      * @see <a href="https://en.wikipedia.org/wiki/Huffman_coding">Huffman coding (Wikipedia)</a>
      */
     private void prepareHuffmanCoding() {
-        Set<String> texts = new LinkedHashSet<>();
-        for (TlkEntry entry : inputData) {
-            if (entry.data != null) {
-                texts.add(entry.data);
-            }
-        }
-        // count into an array (no boxing per character), remembering the order of first occurrence
+        // number the distinct texts; count the characters of each new one into an array (no boxing
+        // per character), remembering the order of first occurrence
+        TextIndex texts = new TextIndex(inputData.size());
+        entryText = new int[inputData.size()];
         int[] counts = new int[Character.MAX_VALUE + 1];
         StringBuilder order = new StringBuilder();
-        for (String text : texts) {
+        char[] chars = new char[256];
+        for (int e = 0; e < entryText.length; e++) {
+            String text = inputData.get(e).data;
+            if (text == null) {
+                entryText[e] = -1;
+                continue;
+            }
+            int known = texts.size();
+            entryText[e] = texts.add(text);
+            if (entryText[e] < known) {
+                continue;
+            }
+            distinctTexts.add(text);
+            if (text.length() > chars.length) {
+                chars = new char[Math.max(text.length(), 2 * chars.length)];
+            }
+            text.getChars(0, text.length(), chars, 0);
             for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
+                char c = chars[i];
                 if (counts[c]++ == 0) {
                     order.append(c);
                 }
@@ -749,5 +766,84 @@ class HuffmanCompression {
             buffer[2 * i + 1] = innerNodes.get(i).right.id;
         }
         return buffer;
+    }
+
+    /**
+     * Numbers distinct strings 0, 1, 2, ... in order of first occurrence, like {@link IntIndex}:
+     * a hash table with open addressing over arrays, cheaper than a {@code LinkedHashSet} of 100k
+     * texts, especially before the JIT has compiled the collection code.
+     */
+    private static final class TextIndex {
+        /** Multiplier for Fibonacci hashing: 2^32 divided by the golden ratio. */
+        private static final int GOLDEN = 0x9E3779B9;
+
+        /** The string of each index. */
+        private String[] strings;
+        /** Per slot, the index of its string plus 1; 0 for an empty slot. A power of two long. */
+        private int[] slots;
+        /** {@code 32 - log2(slots.length)}. */
+        private int shift;
+        /** Number of strings. */
+        private int size;
+
+        /**
+         * Creates an empty index.
+         *
+         * @param expected number of strings expected at most; more are accepted
+         */
+        TextIndex(int expected) {
+            strings = new String[Math.max(16, expected / 2)];
+            int capacity = 16;
+            while (capacity < 2L * expected && capacity < 1 << 30) {
+                capacity <<= 1;
+            }
+            slots = new int[capacity];
+            shift = Integer.numberOfLeadingZeros(capacity) + 1;
+        }
+
+        /**
+         * Returns the index of a string, adding it if it is new.
+         *
+         * @param string the string
+         * @return its index
+         */
+        int add(String string) {
+            int mask = slots.length - 1;
+            int slot = string.hashCode() * GOLDEN >>> shift;
+            int found;
+            while ((found = slots[slot]) != 0) {
+                if (strings[found - 1].equals(string)) {
+                    return found - 1;
+                }
+                slot = (slot + 1) & mask;
+            }
+            if (size == strings.length) {
+                strings = Arrays.copyOf(strings, 2 * size);
+            }
+            strings[size] = string;
+            slots[slot] = ++size;
+            if (2 * size > slots.length) {
+                slots = new int[2 * slots.length];
+                shift--;
+                int newMask = slots.length - 1;
+                for (int i = 0; i < size; i++) {
+                    int s = strings[i].hashCode() * GOLDEN >>> shift;
+                    while (slots[s] != 0) {
+                        s = (s + 1) & newMask;
+                    }
+                    slots[s] = i + 1;
+                }
+            }
+            return size - 1;
+        }
+
+        /**
+         * Returns the number of distinct strings.
+         *
+         * @return the number added
+         */
+        int size() {
+            return size;
+        }
     }
 }
