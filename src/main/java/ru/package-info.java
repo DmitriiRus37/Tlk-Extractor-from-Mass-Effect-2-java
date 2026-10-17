@@ -62,10 +62,13 @@
  *
  * <h2>Classes</h2>
  * {@link ru.App} starts the JavaFX application and {@link ru.FxmlController} handles the UI
- * defined in {@code app.fxml}, running each conversion on a background thread. {@link ru.BitArray}
- * holds the compressed bits; {@link ru.BitConverter} and {@link ru.PositionInputStream} are
- * stand-ins for the .NET classes the C# original relied on. {@link ru.FileFormat} lists the text formats,
- * {@link ru.XmlFormat}, {@link ru.TxtFormat} and {@link ru.CsvFormat} read and write them, and
- * {@link ru.InputFile} holds what a reader returns.
+ * defined in {@code app.fxml}, running each conversion on a background thread.
+ * {@link ru.TlkFile} reads TLK files (decoding with {@link ru.HuffmanDecoder}) and
+ * {@link ru.HuffmanCompression} writes them; {@link ru.BitArray} holds the bits of a Huffman code.
+ * {@link ru.FileFormat} lists the text formats, {@link ru.XmlFormat}, {@link ru.TxtFormat} and
+ * {@link ru.CsvFormat} read and write them, and {@link ru.InputFile} holds what a reader returns.
+ * {@link ru.IntIndex} numbers ids and offsets without boxing, {@link ru.Workers} is the thread pool
+ * of the parallel steps, and {@link ru.AotTraining} is the training run for {@code run.sh}'s AOT
+ * cache.
  */
 package ru;
