@@ -4,7 +4,7 @@ import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
-import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
@@ -216,6 +216,10 @@ final class XmlFormat {
      * read. Every {@code <string>} element below it becomes an entry (see
      * {@link #readEntry(XMLStreamReader, Path)}). DTDs and external entities are not processed.
      *
+     * <p>Files laid out exactly as this class writes them are read by the faster {@link FastXml},
+     * all others (and every error) by StAX ({@link #readWithStax(byte[], Path)}); the result is
+     * the same.
+     *
      * @param file the XML file
      * @return the version and the entries in document order
      * @throws IOException if the file cannot be read, is not well-formed XML, is not a
@@ -223,11 +227,26 @@ final class XmlFormat {
      *                     old or has an invalid entry
      */
     static InputFile read(Path file) throws IOException {
+        byte[] bytes = Files.readAllBytes(file);
+        InputFile fast = FastXml.read(bytes);
+        return fast != null ? fast : readWithStax(bytes, file);
+    }
+
+    /**
+     * Reads a file with StAX: every layout, and every error message. {@link #read(Path)} uses it
+     * for the files {@link FastXml} does not accept.
+     *
+     * @param bytes the content of the file
+     * @param file  the file, for error messages
+     * @return the version from the root element and the entries in document order
+     * @throws IOException if the XML is malformed or not a valid TLK export; see {@link #read(Path)}
+     */
+    static InputFile readWithStax(byte[] bytes, Path file) throws IOException {
         XMLInputFactory factory = XMLInputFactory.newInstance();
         factory.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
         factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
         factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(file))) {
+        try (InputStream in = new ByteArrayInputStream(bytes)) {
             XMLStreamReader reader = factory.createXMLStreamReader(in);
             try {
                 String version = readRoot(reader, file);
