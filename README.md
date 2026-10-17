@@ -151,6 +151,6 @@ Maven uses the JDK in `JAVA_HOME` (check with `mvn -v`); point it at another JDK
 `JAVA_HOME=/path/to/jdk-21 mvn javafx:run`.
 
 The jar is not a self-contained runnable jar: it has no `Main-Class` entry and does not bundle
-commons-io or JavaFX, so start the GUI through Maven as above rather than with `java -jar`.
+JavaFX, so start the GUI through Maven or `run.sh` as above rather than with `java -jar`.
 
 GitHub Actions (`.github/workflows/build.yml`) builds and tests the project on JDK 21 and 25.

@@ -10,8 +10,6 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextField;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
-import lombok.Getter;
-import org.apache.commons.io.FilenameUtils;
 
 import java.io.File;
 import java.nio.file.AccessDeniedException;
@@ -38,9 +36,9 @@ import java.util.function.DoubleConsumer;
  * input is read) and then fills up (while the output is written). Afterwards the status says
  * {@value #STATUS_DONE} or {@value #STATUS_FAILED} followed by the reason.
  *
- * <p>Lombok generates getters for all fields, which the tests use.
+ * <p>The {@code @FXML} controls and the "output chosen" flags are package-private so that the
+ * tests can reach them.
  */
-@Getter
 public class FxmlController {
 
     /** Status text while a conversion runs. */
@@ -58,72 +56,72 @@ public class FxmlController {
 
     /** "Select" button for the TLK input file; its action is wired in the FXML. */
     @FXML
-    private Button buttonToSelectInputTlkFile;
+    Button buttonToSelectInputTlkFile;
     /** "Select" button for the output file (XML, TXT or CSV); its action is wired in the FXML. */
     @FXML
-    private Button buttonToSelectOutputXmlFile;
+    Button buttonToSelectOutputXmlFile;
     /** START button of the "Create XML" tab; its action is wired in the FXML. */
     @FXML
-    private Button startTlkToXml;
+    Button startTlkToXml;
     /** Path of the TLK file to convert, chosen with the dialog or typed in. */
     @FXML
-    private TextField textFieldInputPathTlkToXml;
+    TextField textFieldInputPathTlkToXml;
     /**
      * Path of the file to write; defaults to the input path with the extension of the selected
      * output format.
      */
     @FXML
-    private TextField textFieldOutputPathTlkToXml;
+    TextField textFieldOutputPathTlkToXml;
     /** Output format of the "Create XML/TXT/CSV" tab; {@link FileFormat#XML} by default. */
     @FXML
-    private ChoiceBox<FileFormat> choiceBoxFormatTlkToXml;
+    ChoiceBox<FileFormat> choiceBoxFormatTlkToXml;
     /** Read-only status field of the "Create XML" tab. */
     @FXML
-    private TextField statusTlkToXml;
+    TextField statusTlkToXml;
     /** Progress bar of the "Create XML" tab. */
     @FXML
-    private ProgressBar progressBarTlkToXml;
+    ProgressBar progressBarTlkToXml;
     /**
      * Whether the user picked the output file explicitly; once set, choosing a new input
      * file no longer overwrites the output path.
      */
-    private boolean textFieldOutputChosenTlkToXml;
+    boolean textFieldOutputChosenTlkToXml;
 
     /** "Select" button for the input file (XML, TXT or CSV); its action is wired in the FXML. */
     @FXML
-    private Button buttonToSelectInputXmlFile;
+    Button buttonToSelectInputXmlFile;
     /** "Select" button for the TLK output file; its action is wired in the FXML. */
     @FXML
-    private Button buttonToSelectOutputTlkFile;
+    Button buttonToSelectOutputTlkFile;
     /** START button of the "Create Tlk" tab; its action is wired in the FXML. */
     @FXML
-    private Button startXmlToTlk;
+    Button startXmlToTlk;
     /** Path of the XML, TXT or CSV file to convert, chosen with the dialog or typed in. */
     @FXML
-    private TextField textFieldInputPathXmlToTlk;
+    TextField textFieldInputPathXmlToTlk;
     /** Input format of the "Create Tlk" tab; {@link FileFormat#XML} by default. */
     @FXML
-    private ChoiceBox<FileFormat> choiceBoxFormatXmlToTlk;
+    ChoiceBox<FileFormat> choiceBoxFormatXmlToTlk;
     /** Path of the TLK file to write; defaults to the input path with a {@code .tlk} extension. */
     @FXML
-    private TextField textFieldOutputPathXmlToTlk;
+    TextField textFieldOutputPathXmlToTlk;
     /**
      * "Test version" check box: if selected, every localizable string of the new TLK file is
      * prefixed with its id (see {@link HuffmanCompression#loadInputData(String, FileFormat, boolean)}).
      */
     @FXML
-    private CheckBox checkBoxDebugXmlToTlk;
+    CheckBox checkBoxDebugXmlToTlk;
     /** Read-only status field of the "Create Tlk" tab. */
     @FXML
-    private TextField statusXmlToTlk;
+    TextField statusXmlToTlk;
     /** Progress bar of the "Create Tlk" tab. */
     @FXML
-    private ProgressBar progressBarXmlToTlk;
+    ProgressBar progressBarXmlToTlk;
     /**
      * Whether the user picked the TLK output file explicitly; once set, choosing a new input
      * file no longer overwrites the output path.
      */
-    private boolean textFieldOutputChosenXmlToTlk;
+    boolean textFieldOutputChosenXmlToTlk;
 
     /**
      * Creates the controller. Called reflectively by {@link javafx.fxml.FXMLLoader}, which then
@@ -312,7 +310,11 @@ public class FxmlController {
      * @return the path ending in {@code "." + extension}
      */
     private static String withExtension(File file, String extension) {
-        return FilenameUtils.removeExtension(file.getAbsolutePath()) + "." + extension;
+        String path = file.getAbsolutePath();
+        int dot = path.lastIndexOf('.');
+        // an extension is a dot in the file name, not in a directory name
+        boolean hasExtension = dot > Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        return (hasExtension ? path.substring(0, dot) : path) + "." + extension;
     }
 
     /**
