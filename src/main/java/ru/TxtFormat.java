@@ -208,12 +208,20 @@ final class TxtFormat {
         String version = null;
         int lineNumber = 0;
         int start = 0;
+        // the next line feed at or after start (or the end); found again only once a line passes it,
+        // so that a file with CR line ends is not scanned to its end for every line
+        int lineFeed = -1;
         while (start < content.length() || lineNumber == 0) {
-            int end = start;
-            while (end < content.length() && content.charAt(end) != '\n' && content.charAt(end) != '\r') {
-                end++;
+            if (lineFeed < start) {
+                lineFeed = content.indexOf('\n', start);
+                if (lineFeed < 0) {
+                    lineFeed = content.length();
+                }
             }
-            String line = content.substring(start, end);
+            int carriageReturn = content.indexOf('\r', start, lineFeed);
+            int end = carriageReturn >= 0 ? carriageReturn : lineFeed;
+            int lineStart = start;
+            int lineEnd = end;
             lineNumber++;
             if (end < content.length() && content.charAt(end) == '\r' && end + 1 < content.length()
                     && content.charAt(end + 1) == '\n') {
@@ -222,9 +230,9 @@ final class TxtFormat {
             start = end + 1;
 
             if (version == null) {
-                version = parseHeader(line, file);
-            } else if (!isBlank(line) && line.charAt(0) != COMMENT) {
-                entries.add(parseEntry(line, entries.size(), lineNumber, file));
+                version = parseHeader(content.substring(lineStart, lineEnd), file);
+            } else if (!isBlank(content, lineStart, lineEnd) && content.charAt(lineStart) != COMMENT) {
+                entries.add(parseEntry(content, lineStart, lineEnd, entries.size(), lineNumber, file));
             }
         }
         return new InputFile(version, entries);
@@ -260,16 +268,56 @@ final class TxtFormat {
     /**
      * Tells whether a line holds nothing but spaces and tabs.
      *
-     * @param line the line
+     * @param content the file content
+     * @param start   index of the first character of the line
+     * @param end     index after its last character
      * @return {@code true} if it is blank
      */
-    private static boolean isBlank(String line) {
-        for (int i = 0; i < line.length(); i++) {
-            if (line.charAt(i) != ' ' && line.charAt(i) != '\t') {
+    private static boolean isBlank(String content, int start, int end) {
+        for (int i = start; i < end; i++) {
+            if (content.charAt(i) != ' ' && content.charAt(i) != '\t') {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Parses an entry line in place, without copying the line: the common case of an id of 1 to 9
+     * digits is handled here, anything else by {@link #parseEntry(String, int, int, Path)}, which
+     * also produces every error message.
+     *
+     * @param content    the file content
+     * @param start      index of the first character of the line
+     * @param end        index after its last character
+     * @param position   position to give the entry
+     * @param lineNumber 1-based line number, for error messages
+     * @param file       the file, for error messages
+     * @return the entry
+     * @throws IOException if the line is not {@code <id>: <text>} or the text has an invalid
+     *                     escape sequence
+     */
+    private static TlkEntry parseEntry(String content, int start, int end, int position, int lineNumber, Path file)
+            throws IOException {
+        int colon = content.indexOf(':', start, end);
+        int digits = colon > start && content.charAt(start) == '-' ? start + 1 : start;
+        int id = colon - digits >= 1 && colon - digits <= 9 ? 0 : -1;
+        for (int i = digits; i < colon && id >= 0; i++) {
+            char c = content.charAt(i);
+            id = c >= '0' && c <= '9' ? 10 * id + (c - '0') : -1;
+        }
+        if (id < 0) {
+            return parseEntry(content.substring(start, end), position, lineNumber, file);
+        }
+        if (digits > start) {
+            id = -id;
+        }
+        int textStart = colon + 1 < end && content.charAt(colon + 1) == ' ' ? colon + 2 : colon + 1;
+        if (end - textStart == NO_TEXT.length() && content.startsWith(NO_TEXT, textStart)) {
+            return new TlkEntry(id, position, null);
+        }
+        return new TlkEntry(id, position, unescape(content.substring(textStart, end), textStart - start, lineNumber,
+                file));
     }
 
     /**
@@ -317,7 +365,11 @@ final class TxtFormat {
         for (int i = backslash; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c != '\\') {
-                sb.append(c);
+                // copy the run up to the next backslash at once
+                int next = text.indexOf('\\', i);
+                next = next < 0 ? text.length() : next;
+                sb.append(text, i, next);
+                i = next - 1;
                 continue;
             }
             int column = offset + i + 1;

@@ -202,6 +202,20 @@ class TxtFormatTest {
         }
 
         @Test
+        void largeFileWithCarriageReturnLineEndsIsReadInLinearTime() throws IOException {
+            // looking for the next line feed from every line would scan this file ~10^10 times
+            StringBuilder content = new StringBuilder(HEADER.replace("\n", "\r"));
+            for (int i = 0; i < 200_000; i++) {
+                content.append(i).append(": text ").append(i).append('\r');
+            }
+            long start = System.nanoTime();
+            InputFile in = read(content.toString());
+            assertEquals(200_000, in.entries.size());
+            assertEquals("text 199999", in.entries.get(199_999).data);
+            assertTrue(System.nanoTime() - start < 10_000_000_000L, "took " + (System.nanoTime() - start) / 1e9 + " s");
+        }
+
+        @Test
         void byteOrderMarkIsOptional() throws IOException {
             Path withBom = dir.resolve("bom.txt");
             byte[] content = (HEADER + "1: Жёлтый\n").getBytes(StandardCharsets.UTF_8);
