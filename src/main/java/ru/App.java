@@ -40,6 +40,8 @@ public class App extends Application {
         primaryStage.setScene(new Scene(root));
         primaryStage.setResizable(false);
         primaryStage.show();
+        // compile the conversion code while the user picks a file
+        WarmUp.start();
     }
 
     /**

@@ -150,6 +150,10 @@ Run the GUI:
   (`target/tlk-extractor.jsa`) instead, which speeds up JavaFX startup (~525 → ~370 ms, measured
   on JDK 25) but not the conversions.
 
+However the GUI is started, once its window is open it converts a small generated file through
+every format in the background (`ru.WarmUp`), so that the JIT has compiled the conversion code by
+the time you have picked a file: the first conversion of the bundled sample gets ~150 ms faster.
+
 Maven uses the JDK in `JAVA_HOME` (check with `mvn -v`); point it at another JDK to switch, e.g.
 `JAVA_HOME=/path/to/jdk-21 mvn javafx:run`.
 

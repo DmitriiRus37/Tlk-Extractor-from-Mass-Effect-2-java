@@ -9,9 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Comparator;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Stream;
 
 /**
  * Training run for the AOT cache that {@code run.sh} records on JDK 25+ (JEP 483/514/515): does
@@ -60,8 +58,8 @@ public final class AotTraining {
     }
 
     /**
-     * Converts a TLK file to XML, TXT and CSV and each of them back to TLK, as the two tabs of
-     * the GUI do.
+     * Converts a TLK file through every format in a temporary directory, which is deleted
+     * afterwards.
      *
      * @param tlk the TLK file
      * @throws IOException if a conversion fails
@@ -69,19 +67,9 @@ public final class AotTraining {
     private static void convert(Path tlk) throws IOException {
         Path dir = Files.createTempDirectory("tlk-aot-training");
         try {
-            TlkFile file = new TlkFile();
-            file.loadTlkData(tlk.toString());
-            for (FileFormat format : FileFormat.values()) {
-                Path text = dir.resolve("training." + format.name().toLowerCase());
-                file.storeToFile(text.toString(), format, progress -> { });
-                HuffmanCompression compression = new HuffmanCompression();
-                compression.loadInputData(text.toString(), format, false);
-                compression.saveToTlkFile(dir.resolve("training-" + format.name() + ".tlk").toString(), progress -> { });
-            }
+            WarmUp.convert(tlk, dir);
         } finally {
-            try (Stream<Path> files = Files.walk(dir)) {
-                files.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
-            }
+            WarmUp.delete(dir);
         }
     }
 }
