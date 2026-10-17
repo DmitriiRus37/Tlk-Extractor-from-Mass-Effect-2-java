@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -419,7 +421,14 @@ public class TlkFile {
      */
     private static ByteBuffer formatChunk(FileFormat format, TlkStringRef[] refs, int start, int end, int maleCount,
                                           int lastPosition) {
-        TextBuffer text = new TextBuffer();
+        // room for the texts plus the markup around them, so that the buffer rarely has to grow
+        long capacity = 256 + (long) (end - start) * (format == FileFormat.XML ? 112 : 32);
+        for (int i = start; i < end; i++) {
+            if (refs[i].data != null) {
+                capacity += refs[i].data.length();
+            }
+        }
+        TextBuffer text = new TextBuffer((int) Math.min(capacity, MAX_BODY_SIZE));
         FormatWriter writer = formatWriter(format, text);
         try {
             for (int i = start; i < end; i++) {
@@ -482,29 +491,69 @@ public class TlkFile {
         writer.comment("Female entries section begin (ends at position " + lastPosition + ")");
     }
 
-    /** A {@link Writer} that collects text in a {@link StringBuilder}, without locking. */
+    /** A {@link Writer} that collects text in a char array, without locking. */
     private static final class TextBuffer extends Writer {
-        /** The text written so far. */
-        private final StringBuilder text = new StringBuilder();
+        /** The text written so far, in its first {@link #length} elements. */
+        private char[] chars;
+        /** Number of characters written. */
+        private int length;
+
+        /** Creates a buffer with a small initial capacity. */
+        TextBuffer() {
+            this(256);
+        }
+
+        /**
+         * Creates a buffer.
+         *
+         * @param capacity expected number of characters; more are accepted
+         */
+        TextBuffer(int capacity) {
+            chars = new char[Math.max(16, capacity)];
+        }
+
+        /**
+         * Grows the array so that {@code extra} more characters fit.
+         *
+         * @param extra number of characters about to be written
+         */
+        private void ensureRoom(int extra) {
+            int needed = length + extra;
+            if (needed > chars.length) {
+                chars = Arrays.copyOf(chars, Math.max(needed, 2 * chars.length));
+            }
+        }
 
         @Override
         public void write(int c) {
-            text.append((char) c);
+            ensureRoom(1);
+            chars[length++] = (char) c;
         }
 
         @Override
-        public void write(char[] chars, int offset, int length) {
-            text.append(chars, offset, length);
+        public void write(char[] c, int offset, int count) {
+            ensureRoom(count);
+            System.arraycopy(c, offset, chars, length, count);
+            length += count;
         }
 
         @Override
-        public void write(String s, int offset, int length) {
-            text.append(s, offset, offset + length);
+        public void write(String s, int offset, int count) {
+            ensureRoom(count);
+            s.getChars(offset, offset + count, chars, length);
+            length += count;
         }
 
         @Override
         public Writer append(CharSequence s) {
-            text.append(s);
+            if (s instanceof StringBuilder sb) {
+                ensureRoom(sb.length());
+                sb.getChars(0, sb.length(), chars, length);
+                length += sb.length();
+            } else {
+                String str = String.valueOf(s);
+                write(str, 0, str.length());
+            }
             return this;
         }
 
@@ -524,12 +573,21 @@ public class TlkFile {
          * @throws CharacterCodingException if the text contains an unpaired surrogate
          */
         ByteBuffer encode() throws CharacterCodingException {
-            char[] chars = new char[text.length()];
-            text.getChars(0, chars.length, chars, 0);
-            return StandardCharsets.UTF_8.newEncoder()
+            CharsetEncoder encoder = StandardCharsets.UTF_8.newEncoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .encode(CharBuffer.wrap(chars));
+                    .onUnmappableCharacter(CodingErrorAction.REPORT);
+            // a UTF-16 char takes at most 3 UTF-8 bytes (a surrogate pair takes 4 for 2 chars), so
+            // the output never has to grow
+            ByteBuffer out = ByteBuffer.allocate((int) Math.max(16, Math.min(3L * length, MAX_BODY_SIZE)));
+            CoderResult result = encoder.encode(CharBuffer.wrap(chars, 0, length), out, true);
+            if (!result.isUnderflow()) {
+                result.throwException();
+            }
+            result = encoder.flush(out);
+            if (!result.isUnderflow()) {
+                result.throwException();
+            }
+            return out.flip();
         }
     }
 
