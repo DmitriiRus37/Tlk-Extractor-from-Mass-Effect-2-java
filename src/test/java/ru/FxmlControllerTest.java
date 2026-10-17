@@ -107,6 +107,26 @@ class FxmlControllerTest {
     }
 
     @Test
+    void aboutTextIsAddedWhenTheAboutTabIsFirstShown() throws Exception {
+        javafx.scene.control.Tab about = TestSupport.field(controller, "aboutTab");
+        javafx.scene.layout.AnchorPane pane = TestSupport.field(controller, "aboutPane");
+        javafx.scene.control.TextArea text = TestSupport.field(controller, "aboutText");
+        assertTrue(pane.getChildren().isEmpty());
+        assertTrue(text.getText().contains("me2-tlk-tool"));
+        JavaFxToolkit.onFxThread(() -> {
+            about.getTabPane().getSelectionModel().select(about);
+            return null;
+        });
+        assertEquals(java.util.List.of(text), pane.getChildren());
+        JavaFxToolkit.onFxThread(() -> {
+            about.getTabPane().getSelectionModel().select(0);
+            about.getTabPane().getSelectionModel().select(about);
+            return null;
+        });
+        assertEquals(1, pane.getChildren().size());
+    }
+
+    @Test
     void withExtensionReplacesOnlyTheFileNamesExtension() throws Exception {
         Class<?>[] types = TestSupport.types(java.io.File.class, String.class);
         for (String[] c : new String[][]{

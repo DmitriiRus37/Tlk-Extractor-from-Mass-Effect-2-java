@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<?language java?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.text.*?>
@@ -48,15 +47,16 @@
                         </children>
                     </AnchorPane>
                 </Tab>
-                <Tab text="About">
-                    <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="343.0" prefWidth="655.0">
-                        <children>
-                            <TextArea editable="false" layoutX="34.0" layoutY="7.0" prefHeight="280.0" prefWidth="602.0" text="This project was rewritten from GithHub &#10;https://github.com/jgoclawski/me2-tlk-tool &#10;as my Java Pet Project.&#10;&#10;&quot;Create XML/TXT/CSV&quot; is a tab to load Tlk file and get output XML, TXT or CSV.&#10;&#10;&quot;Create TLK&quot; is a tab to load edited XML, TXT or CSV file and get output TLK.&#10;&#10;&#10;Author: gurylev.dmitrii@mail.ru Gurylev Dmitrii (Russia, Moscow)">
+                <Tab fx:id="aboutTab" text="About">
+                    <AnchorPane fx:id="aboutPane" minHeight="0.0" minWidth="0.0" prefHeight="343.0" prefWidth="655.0">
+                        <!-- added to aboutPane when the tab is first shown, see FxmlController.initialize -->
+                        <fx:define>
+                            <TextArea fx:id="aboutText" editable="false" layoutX="34.0" layoutY="7.0" prefHeight="280.0" prefWidth="602.0" text="This project was rewritten from GithHub &#10;https://github.com/jgoclawski/me2-tlk-tool &#10;as my Java Pet Project.&#10;&#10;&quot;Create XML/TXT/CSV&quot; is a tab to load Tlk file and get output XML, TXT or CSV.&#10;&#10;&quot;Create TLK&quot; is a tab to load edited XML, TXT or CSV file and get output TLK.&#10;&#10;&#10;Author: gurylev.dmitrii@mail.ru Gurylev Dmitrii (Russia, Moscow)">
                                 <font>
                                     <Font size="17.0" />
                                 </font>
                             </TextArea>
-                        </children>
+                        </fx:define>
                     </AnchorPane>
                 </Tab>
             </tabs>

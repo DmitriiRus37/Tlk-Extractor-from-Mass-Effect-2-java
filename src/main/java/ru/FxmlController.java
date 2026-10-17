@@ -7,7 +7,10 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.AnchorPane;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
@@ -123,6 +126,16 @@ public class FxmlController {
      */
     boolean textFieldOutputChosenXmlToTlk;
 
+    /** The "About" tab. */
+    @FXML
+    private Tab aboutTab;
+    /** The content of the "About" tab; empty until the tab is first shown. */
+    @FXML
+    private AnchorPane aboutPane;
+    /** The text of the "About" tab, created by {@code app.fxml} but not yet in the scene. */
+    @FXML
+    private TextArea aboutText;
+
     /**
      * Creates the controller. Called reflectively by {@link javafx.fxml.FXMLLoader}, which then
      * injects the {@code @FXML} fields.
@@ -143,6 +156,12 @@ public class FxmlController {
         }
         followFileName(textFieldOutputPathTlkToXml, choiceBoxFormatTlkToXml);
         followFileName(textFieldInputPathXmlToTlk, choiceBoxFormatXmlToTlk);
+        // a text area in the scene costs its skin and CSS at startup even in a hidden tab
+        aboutTab.setOnSelectionChanged(event -> {
+            if (aboutTab.isSelected() && aboutPane.getChildren().isEmpty()) {
+                aboutPane.getChildren().add(aboutText);
+            }
+        });
         choiceBoxFormatTlkToXml.valueProperty().addListener((observable, oldFormat, newFormat) -> {
             String path = textFieldOutputPathTlkToXml.getText();
             FileFormat current = FileFormat.fromFileName(path);
