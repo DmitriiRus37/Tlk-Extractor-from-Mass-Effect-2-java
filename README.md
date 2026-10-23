@@ -1,5 +1,11 @@
 # Tlk-Extractor-from-Mass-Effect-2
 
+A JavaFX desktop tool that converts Mass Effect 2 TLK files (the game's binary string tables, including all dialogue) to editable XML, TXT or CSV and back.
+
+## Tech stack
+
+Java 25, JavaFX (OpenJFX 27), Maven, JUnit, JaCoCo.
+
 ## Overview
 
 Project was rewritten from https://github.com/jgoclawski/me2-tlk-tool.
@@ -120,6 +126,8 @@ The GUI needs JavaFX: Maven takes OpenJFX 27.0.1 from Maven Central (it needs JD
 No separate JavaFX SDK install is needed.
 
 ## Build and run
+
+`mvn verify` fails below **90 % line coverage** (JaCoCo, non-GUI code; report in `target/site/jacoco`).
 
 ```bash
 mvn clean verify          # compile, run the tests, check coverage; builds target/tlk-extractor-1.0-SNAPSHOT.jar
