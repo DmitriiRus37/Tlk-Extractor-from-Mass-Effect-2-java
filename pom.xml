@@ -8,16 +8,16 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <!-- Java 21 is the oldest supported JDK: bytecode and API level 21 on every JDK -->
-        <maven.compiler.release>21</maven.compiler.release>
+        <!-- Java 25 is the oldest supported JDK: bytecode and API level 25 -->
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <main.class>ru.App</main.class>
 
         <!-- dependencies -->
-        <!-- OpenJFX for JDK 25+; JDK 21 to 24 get an older line from the openjfx-* profiles below -->
-        <javafx.version>27</javafx.version>
+        <!-- OpenJFX 27 needs JDK 25+ (class file version 69) -->
+        <javafx.version>27.0.1</javafx.version>
 
         <!-- test dependencies -->
         <junit-jupiter.version>6.1.3</junit-jupiter.version>
@@ -33,7 +33,7 @@
         <maven-site-plugin.version>3.22.0</maven-site-plugin.version>
         <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
         <javafx-maven-plugin.version>0.0.8</javafx-maven-plugin.version>
-        <versions-maven-plugin.version>2.22.0</versions-maven-plugin.version>
+        <versions-maven-plugin.version>2.23.0</versions-maven-plugin.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
 
         <!-- minimum coverage enforced by "mvn verify" (jacoco:check) for the non-GUI code -->
@@ -247,38 +247,7 @@
         </plugins>
     </build>
 
-    <!--
-      Java 21+ from one pom: the profiles below are activated by the JDK that runs Maven and pick
-      the newest OpenJFX release that JDK can run (each line needs a minimum JDK, the class file
-      version of its jars).
-
-      | JDK running Maven | JavaFX for the GUI         |
-      |===================|============================|
-      | 21, 22            | OpenJFX 21.0.x             |
-      | 23, 24            | OpenJFX 25.0.x (needs 23)  |
-      | 25+               | OpenJFX 27 (needs 25)      |
-    -->
     <profiles>
-        <profile>
-            <id>openjfx-21</id>
-            <activation>
-                <jdk>[21,23)</jdk>
-            </activation>
-            <properties>
-                <javafx.version>21.0.12</javafx.version>
-            </properties>
-        </profile>
-        <profile>
-            <id>openjfx-25</id>
-            <activation>
-                <jdk>[23,25)</jdk>
-            </activation>
-            <properties>
-                <javafx.version>25.0.4</javafx.version>
-            </properties>
-        </profile>
-        <!-- JDK 25+ uses the default javafx.version (27) -->
-
         <!-- JDK 24+ (JEP 472) warns when javafx.graphics loads its native libraries otherwise -->
         <profile>
             <id>javafx-native-access</id>

@@ -4,7 +4,7 @@
 # - Builds the jar (tests skipped) and the runtime class path with Maven only when they are
 #   missing or src/ or pom.xml changed since the last build (files or directories, so that
 #   deleted and renamed files count).
-# - Needs Java 21+ and runs the JDK in JAVA_HOME, as Maven does, or else the one "java" on the
+# - Needs Java 25+ and runs the JDK in JAVA_HOME, as Maven does, or else the one "java" on the
 #   PATH runs; puts the OpenJFX jars on the module path, as "mvn javafx:run" does.
 # - On JDK 25+ uses an AOT cache (JEP 483/514/515): the first start after a build first runs
 #   ru.AotTraining, which builds the window without showing it and converts the bundled
@@ -25,7 +25,7 @@ cd "$(dirname "$0")"
 if [ -n "$JAVA_HOME" ]; then
     JDK=$JAVA_HOME
 else
-    JAVA_ON_PATH=$(command -v java) || { echo "TLK Extractor needs Java 21 or newer; no \"java\" found." >&2; exit 1; }
+    JAVA_ON_PATH=$(command -v java) || { echo "TLK Extractor needs Java 25 or newer; no \"java\" found." >&2; exit 1; }
     JDK=$(dirname "$(dirname "$(readlink -f "$JAVA_ON_PATH" 2>/dev/null || echo "$JAVA_ON_PATH")")")
     if [ ! -f "$JDK/release" ] && [ -x /usr/libexec/java_home ]; then
         # macOS: /usr/bin/java is a launcher that runs the JDK java_home picks
@@ -41,8 +41,8 @@ if [ ! -x "$JAVA" ] || [ -z "$JAVA_VERSION" ]; then
 fi
 # "21", "25", ... ("1.8" on Java 8)
 JAVA_MAJOR=${JAVA_VERSION%%.*}
-if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 21 ]; then
-    echo "TLK Extractor needs Java 21 or newer; $JAVA is version ${JAVA_VERSION:-unknown}." >&2
+if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 25 ]; then
+    echo "TLK Extractor needs Java 25 or newer; $JAVA is version ${JAVA_VERSION:-unknown}." >&2
     exit 1
 fi
 

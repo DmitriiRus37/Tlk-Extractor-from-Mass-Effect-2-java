@@ -15,12 +15,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Java 21 is the oldest supported JDK; the pom picks the JavaFX version from the JDK
-        # that runs Maven, see its profiles.
+        # Java 25 is the oldest supported JDK (the code is compiled with --release 25)
         include:
-          - java: '21'
-            distribution: temurin
-            java-package: jdk
           - java: '25'
             distribution: temurin
             java-package: jdk
@@ -34,6 +30,6 @@ jobs:
           java-package: ${{ matrix.java-package }}
           cache: maven
 
-      # compile (bytecode level Java 21), tests, JaCoCo coverage check, then the Javadoc
+      # compile (bytecode level Java 25), tests, JaCoCo coverage check, then the Javadoc
       - name: Build
         run: mvn -B -ntp clean verify javadoc:javadoc

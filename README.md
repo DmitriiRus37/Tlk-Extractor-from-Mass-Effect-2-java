@@ -110,22 +110,13 @@ Errors in a TXT or CSV file are reported with the line number, e.g.
 
 ## Requirements
 
-- JDK 21 or newer (tested on 21 and 25). The code is compiled with `--release 21`, so the jar
-  needs a Java 21+ runtime.
+- JDK 25 or newer. The code is compiled with `--release 25`, so the jar needs a Java 25+
+  runtime.
 - Maven 3.6.3+.
 
 ### JavaFX
 
-The GUI needs JavaFX. Maven picks it according to the JDK that runs the build (JDK-activated
-profiles in `pom.xml`):
-
-| JDK running Maven | JavaFX used (OpenJFX from Maven Central) |
-|-------------------|------------------------------------------|
-| 21 – 22           | OpenJFX 21.0.12                          |
-| 23 – 24           | OpenJFX 25.0.4                           |
-| 25 and newer      | OpenJFX 27                               |
-
-Each OpenJFX release line needs a minimum JDK, so every range gets the newest release it can run.
+The GUI needs JavaFX: Maven takes OpenJFX 27.0.1 from Maven Central (it needs JDK 25 or newer).
 No separate JavaFX SDK install is needed.
 
 ## Build and run
@@ -155,9 +146,9 @@ every format in the background (`ru.WarmUp`), so that the JIT has compiled the c
 the time you have picked a file: the first conversion of the bundled sample gets ~150 ms faster.
 
 Maven uses the JDK in `JAVA_HOME` (check with `mvn -v`); point it at another JDK to switch, e.g.
-`JAVA_HOME=/path/to/jdk-21 mvn javafx:run`.
+`JAVA_HOME=/path/to/jdk-25 mvn javafx:run`.
 
 The jar is not a self-contained runnable jar: it has no `Main-Class` entry and does not bundle
 JavaFX, so start the GUI through Maven or `run.sh` as above rather than with `java -jar`.
 
-GitHub Actions (`.github/workflows/build.yml`) builds and tests the project on JDK 21 and 25.
+GitHub Actions (`.github/workflows/build.yml`) builds and tests the project on JDK 25.
